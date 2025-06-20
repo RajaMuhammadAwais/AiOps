@@ -1,0 +1,118 @@
+🤝 Contributing to AIOps Enterprise
+Welcome, and thank you for considering contributing to AIOps Enterprise – an open-source, intelligent incident management platform powered by AI and automation! 🚀
+
+We’re excited to collaborate with developers, data scientists, DevOps engineers, and AI researchers to build the future of autonomous operations.
+
+📋 Table of Contents
+Getting Started
+
+Ways to Contribute
+
+Code Guidelines
+
+Pull Request Process
+
+Reporting Issues
+
+Community Standards
+
+License
+
+🧰 Getting Started
+Fork the repository
+
+Clone your fork
+
+bash
+Copy
+Edit
+git clone https://github.com/your-username/AiOps.git
+cd AiOps
+Create a branch for your feature or bugfix
+
+bash
+Copy
+Edit
+git checkout -b feature/your-feature-name
+Install dependencies
+
+bash
+Copy
+Edit
+pip install -r requirements.txt
+Run tests locally
+
+bash
+Copy
+Edit
+pytest tests/
+🚀 Ways to Contribute
+Submit bug reports 🐛
+
+Suggest new features 🧠
+
+Improve documentation 📚
+
+Add or optimize ML models 🤖
+
+Build new plugins (alerting, dashboards, integrations) 🛠️
+
+Refactor or clean up code 🧼
+
+🧪 Code Guidelines
+Follow PEP8 standards
+
+Use black for formatting
+
+Run flake8 to check linting
+
+Add unit tests for any new logic
+
+Keep functions modular and well-documented
+
+Follow the folder structure under /src and /tests
+
+🔁 Pull Request Process
+Push your changes
+
+Open a pull request against the main branch
+
+Ensure:
+
+Tests are passing ✅
+
+Code is linted and formatted 💅
+
+The PR includes a clear description of what you changed and why
+
+We will review and provide feedback within 2–3 working days.
+
+🐞 Reporting Issues
+If you find a bug or unexpected behavior:
+
+Open an issue
+
+Include:
+
+Steps to reproduce
+
+Expected vs. actual behavior
+
+Screenshots or logs if possible
+
+🌟 Community Standards
+Be respectful and inclusive
+
+Avoid spam or self-promotion
+
+Keep discussions constructive
+
+Follow the Code of Conduct (if applicable)
+
+📄 License
+This project is licensed under the MIT License.
+By contributing, you agree that your code will be released under the same license.
+
+🙌 Thank You!
+We appreciate your interest in contributing to AIOps Enterprise. Together, we can build a smarter and more resilient operations ecosystem!
+
