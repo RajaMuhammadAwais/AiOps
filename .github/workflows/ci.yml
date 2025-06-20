@@ -22,6 +22,11 @@ jobs:
     - name: 📦 Install dependencies
       run: |
         pip install -r requirements.txt
+        - name: 🧪 Run tests
+        run: |
+        pip install pytest
+        pytest tests/
+
 
     - name: 🧪 Run tests
       run: |
