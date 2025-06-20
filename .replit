@@ -1,9 +1,0 @@
-modules = ["nodejs-20", "python-3.11"]
-
-[nix]
-channel = "stable-24_05"
-packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libxcrypt", "pkg-config", "qhull", "tcl", "tk"]
-
-[[ports]]
-localPort = 5000
-externalPort = 80
