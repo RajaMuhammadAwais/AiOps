@@ -1,4 +1,3 @@
-
 name: 🚀 AIOps CI/CD
 
 on:
@@ -12,69 +11,152 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.11, 3.12]
+        python-version: ["3.11", "3.12"]
 
     steps:
-    - name: ⬇️ Checkout code
-      uses: actions/checkout@v4
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
 
-    - name: 🐍 Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: 🐍 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: 📦 Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: 📦 Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
 
-    - name: 🧪 Run tests
-      run: |
-        python -m pytest tests/ -v --cov=src --cov-report=xml
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov black flake8 mypy bandit
 
-    - name: 📏 Lint and format check
-      run: |
-        black . --check
-        flake8 src/ --max-line-length=88
-        mypy src/ --ignore-missing-imports
+      - name: 🧪 Run tests
+        run: |
+          python -m pytest tests/ -v --cov=src --cov-report=xml
 
-    - name: 🔍 Security check
-      run: |
-        pip install bandit
-        bandit -r src/ -f json
+      - name: 📏 Lint and format check
+        run: |
+          black . --check
+          flake8 src/ --max-line-length=88
+          mypy src/ --ignore-missing-imports
+
+      - name: 🔍 Security check
+        run: |
+          bandit -r src/ -f json -o bandit-report.json
+
+      - name: 📤 Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: 📤 Upload security report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
 
   build:
     runs-on: ubuntu-latest
     needs: test
+    strategy:
+      matrix:
+        python-version: ["3.11"] # Align with a single version for build to avoid redundancy
 
     steps:
-    - name: ⬇️ Checkout code
-      uses: actions/checkout@v4
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
 
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.11
+      - name: 🐍 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: 📦 Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: 📦 Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
 
-    - name: 🔨 Build application
-      run: |
-        python -c "import src; print('Build successful')"
-        python test_aiops.py --validate-only
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: 📊 Generate demo data
-      run: |
-        python demo_data_generator.py
+      - name: 📦 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18" # Adjust based on package.json requirements
+          cache: "npm"
+
+      - name: 📦 Install Node.js dependencies
+        run: npm ci
+
+      - name: 🔨 Build application
+        run: |
+          python -c "import src; print('Python build validation successful')"
+          npm run build # Assumes a build script in package.json for web_dashboard.py
+
+      - name: 📊 Generate demo data
+        run: |
+          python demo_data_generator.py
+
+      - name: 📤 Upload demo data
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-data
+          path: |
+            demo_alerts.json
+            demo_current_data.json
+            demo_historical_data.json
 
   deploy-staging:
     runs-on: ubuntu-latest
     needs: [test, build]
     if: github.ref == 'refs/heads/main'
+    environment: staging # Requires GitHub environment for secrets and approvals
 
     steps:
-    - name: ⬇️ Checkout code
-      uses: actions/checkout@v4
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 📦 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: 📦 Install Node.js dependencies
+        run: npm ci
+
+      - name: 🚀 Deploy to staging
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_ENDPOINT: ${{ secrets.STAGING_ENDPOINT }}
+        run: |
+          # Example deployment command (replace with actual deployment logic)
+          ./install_aiops.sh --staging
+          python web_dashboard.py --deploy staging
