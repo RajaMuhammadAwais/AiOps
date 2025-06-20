@@ -78,9 +78,3 @@ jobs:
     steps:
     - name: ⬇️ Checkout code
       uses: actions/checkout@v4
-
-    - name: 🚀 Deploy to Replit
-      run: |
-        echo "Deployment to Replit staging environment"
-        # Add your Replit deployment commands here
-        echo "AIOps system ready for deployment"
