@@ -38,7 +38,6 @@ jobs:
       - name: 🧪 Run tests
         run: |
           python -m pytest tests/ -v --cov=src --cov-report=xml --cov-fail-under=0
-        continue-on-error: true # Allow workflow to proceed if no tests are found
 
       - name: 📏 Lint and format check
         run: |
@@ -51,7 +50,7 @@ jobs:
           bandit -r src/ -f json -o bandit-report.json
 
       - name: 📤 Upload coverage report
-        if: always() # Upload even if tests fail or no tests are found
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report-${{ matrix.python-version }}
@@ -107,16 +106,20 @@ jobs:
 
       - name: 📊 Generate demo data
         run: |
-          python demo_data_generator.py
+          python demo/demo_data_generator.py
+
+      - name: 🧪 Run demo
+        run: |
+          python demo/demo_aiops.py
 
       - name: 📤 Upload demo data
         uses: actions/upload-artifact@v4
         with:
           name: demo-data
           path: |
-            demo_alerts.json
-            demo_current_data.json
-            demo_historical_data.json
+            demo/demo_alerts.json
+            demo/demo_current_data.json
+            demo/demo_historical_data.json
 
   deploy-staging:
     runs-on: ubuntu-latest
