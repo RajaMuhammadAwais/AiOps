@@ -26,7 +26,7 @@ jobs:
 
     - name: 🧪 Run tests
       run: |
-        pytest tests/
+        pytest test_aiops.py
 
     - name: 📏 Lint and format check
       run: |
