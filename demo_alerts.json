@@ -1,95 +1,67 @@
 [
   {
-    "id": "alert_1750412945_0",
+    "id": "alert_1750414276_0",
     "name": "api-gateway Alert",
-    "severity": "low",
-    "source": "system",
-    "timestamp": "2025-06-20 09:37:05.921813",
-    "message": "Authentication service unreachable",
-    "labels": {
-      "service": "api-gateway",
-      "environment": "production",
-      "region": "us-east-1"
-    },
-    "metrics": []
-  },
-  {
-    "id": "alert_1750412945_1",
-    "name": "web-server Alert",
-    "severity": "low",
-    "source": "system",
-    "timestamp": "2025-06-20 07:54:05.921836",
-    "message": "High CPU usage detected",
-    "labels": {
-      "service": "web-server",
-      "environment": "production",
-      "region": "us-east-1"
-    },
-    "metrics": []
-  },
-  {
-    "id": "alert_1750412945_2",
-    "name": "web-server Alert",
     "severity": "medium",
     "source": "system",
-    "timestamp": "2025-06-20 08:23:05.921847",
-    "message": "API response time degraded",
-    "labels": {
-      "service": "web-server",
-      "environment": "production",
-      "region": "us-west-2"
-    },
-    "metrics": []
-  },
-  {
-    "id": "alert_1750412945_3",
-    "name": "api-gateway Alert",
-    "severity": "high",
-    "source": "system",
-    "timestamp": "2025-06-20 07:54:05.921856",
-    "message": "API response time degraded",
-    "labels": {
-      "service": "api-gateway",
-      "environment": "production",
-      "region": "us-east-1"
-    },
-    "metrics": []
-  },
-  {
-    "id": "alert_1750412945_4",
-    "name": "web-server Alert",
-    "severity": "high",
-    "source": "system",
-    "timestamp": "2025-06-20 08:01:05.921863",
+    "timestamp": "2025-06-20 09:12:16.634752",
     "message": "Disk space critically low",
     "labels": {
-      "service": "web-server",
-      "environment": "production",
-      "region": "us-east-1"
-    },
-    "metrics": []
-  },
-  {
-    "id": "alert_1750412945_5",
-    "name": "web-server Alert",
-    "severity": "low",
-    "source": "system",
-    "timestamp": "2025-06-20 08:12:05.921871",
-    "message": "Network connectivity issues",
-    "labels": {
-      "service": "web-server",
+      "service": "api-gateway",
       "environment": "production",
       "region": "eu-west-1"
     },
     "metrics": []
   },
   {
-    "id": "alert_1750412945_6",
-    "name": "api-gateway Alert",
-    "severity": "high",
+    "id": "alert_1750414276_1",
+    "name": "database Alert",
+    "severity": "low",
     "source": "system",
-    "timestamp": "2025-06-20 08:52:05.921923",
-    "message": "API response time degraded",
+    "timestamp": "2025-06-20 08:27:16.634779",
+    "message": "Connection timeout to database",
+    "labels": {
+      "service": "database",
+      "environment": "production",
+      "region": "us-east-1"
+    },
+    "metrics": []
+  },
+  {
+    "id": "alert_1750414276_2",
+    "name": "cache Alert",
+    "severity": "low",
+    "source": "system",
+    "timestamp": "2025-06-20 08:20:16.634792",
+    "message": "Authentication service unreachable",
+    "labels": {
+      "service": "cache",
+      "environment": "production",
+      "region": "us-west-2"
+    },
+    "metrics": []
+  },
+  {
+    "id": "alert_1750414276_3",
+    "name": "database Alert",
+    "severity": "low",
+    "source": "system",
+    "timestamp": "2025-06-20 09:55:16.634800",
+    "message": "Authentication service unreachable",
+    "labels": {
+      "service": "database",
+      "environment": "production",
+      "region": "us-west-2"
+    },
+    "metrics": []
+  },
+  {
+    "id": "alert_1750414276_4",
+    "name": "api-gateway Alert",
+    "severity": "medium",
+    "source": "system",
+    "timestamp": "2025-06-20 09:20:16.634809",
+    "message": "Network connectivity issues",
     "labels": {
       "service": "api-gateway",
       "environment": "production",
@@ -98,16 +70,44 @@
     "metrics": []
   },
   {
-    "id": "alert_1750412945_7",
-    "name": "api-gateway Alert",
+    "id": "alert_1750414276_5",
+    "name": "cache Alert",
     "severity": "medium",
     "source": "system",
-    "timestamp": "2025-06-20 08:43:05.921932",
-    "message": "API response time degraded",
+    "timestamp": "2025-06-20 09:03:16.634819",
+    "message": "Network connectivity issues",
     "labels": {
-      "service": "api-gateway",
+      "service": "cache",
       "environment": "production",
       "region": "eu-west-1"
+    },
+    "metrics": []
+  },
+  {
+    "id": "alert_1750414276_6",
+    "name": "database Alert",
+    "severity": "medium",
+    "source": "system",
+    "timestamp": "2025-06-20 08:43:16.634827",
+    "message": "Connection timeout to database",
+    "labels": {
+      "service": "database",
+      "environment": "production",
+      "region": "us-west-2"
+    },
+    "metrics": []
+  },
+  {
+    "id": "alert_1750414276_7",
+    "name": "cache Alert",
+    "severity": "low",
+    "source": "system",
+    "timestamp": "2025-06-20 08:15:16.634839",
+    "message": "High CPU usage detected",
+    "labels": {
+      "service": "cache",
+      "environment": "production",
+      "region": "us-east-1"
     },
     "metrics": []
   }
