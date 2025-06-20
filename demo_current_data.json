@@ -1,0 +1,227 @@
+[
+  {
+    "name": "web-server_cpu_usage",
+    "value": 100,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "web-server",
+    "metric_type": "cpu_usage"
+  },
+  {
+    "name": "web-server_memory_usage",
+    "value": 53.51360059595458,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "web-server",
+    "metric_type": "memory_usage"
+  },
+  {
+    "name": "web-server_disk_usage",
+    "value": 82.2315945423994,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "web-server",
+    "metric_type": "disk_usage"
+  },
+  {
+    "name": "web-server_response_time",
+    "value": 153.65852840149728,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "milliseconds",
+    "source": "demo",
+    "service": "web-server",
+    "metric_type": "response_time"
+  },
+  {
+    "name": "web-server_error_rate",
+    "value": 1.725766447072332,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "web-server",
+    "metric_type": "error_rate"
+  },
+  {
+    "name": "database_cpu_usage",
+    "value": 63.64421191854496,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "database",
+    "metric_type": "cpu_usage"
+  },
+  {
+    "name": "database_memory_usage",
+    "value": 41.12697490463425,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "database",
+    "metric_type": "memory_usage"
+  },
+  {
+    "name": "database_disk_usage",
+    "value": 64.94287011375546,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "database",
+    "metric_type": "disk_usage"
+  },
+  {
+    "name": "database_response_time",
+    "value": 253.0451756220965,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "milliseconds",
+    "source": "demo",
+    "service": "database",
+    "metric_type": "response_time"
+  },
+  {
+    "name": "database_error_rate",
+    "value": 15.37891553762615,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "database",
+    "metric_type": "error_rate"
+  },
+  {
+    "name": "cache_cpu_usage",
+    "value": 55.67599164772411,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "cache",
+    "metric_type": "cpu_usage"
+  },
+  {
+    "name": "cache_memory_usage",
+    "value": 49.1552984984945,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "cache",
+    "metric_type": "memory_usage"
+  },
+  {
+    "name": "cache_disk_usage",
+    "value": 71.3807553208363,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "cache",
+    "metric_type": "disk_usage"
+  },
+  {
+    "name": "cache_response_time",
+    "value": 220.01014921359553,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "milliseconds",
+    "source": "demo",
+    "service": "cache",
+    "metric_type": "response_time"
+  },
+  {
+    "name": "cache_error_rate",
+    "value": 0.4903919689621109,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "cache",
+    "metric_type": "error_rate"
+  },
+  {
+    "name": "api-gateway_cpu_usage",
+    "value": 45.07268953040094,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "api-gateway",
+    "metric_type": "cpu_usage"
+  },
+  {
+    "name": "api-gateway_memory_usage",
+    "value": 60.02675515721974,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "api-gateway",
+    "metric_type": "memory_usage"
+  },
+  {
+    "name": "api-gateway_disk_usage",
+    "value": 75.96873681317098,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "api-gateway",
+    "metric_type": "disk_usage"
+  },
+  {
+    "name": "api-gateway_response_time",
+    "value": 524.8329264523699,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "milliseconds",
+    "source": "demo",
+    "service": "api-gateway",
+    "metric_type": "response_time"
+  },
+  {
+    "name": "api-gateway_error_rate",
+    "value": 0.6408086134354976,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "api-gateway",
+    "metric_type": "error_rate"
+  },
+  {
+    "name": "auth-service_cpu_usage",
+    "value": 100,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "auth-service",
+    "metric_type": "cpu_usage"
+  },
+  {
+    "name": "auth-service_memory_usage",
+    "value": 52.7968675212554,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "auth-service",
+    "metric_type": "memory_usage"
+  },
+  {
+    "name": "auth-service_disk_usage",
+    "value": 100,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "auth-service",
+    "metric_type": "disk_usage"
+  },
+  {
+    "name": "auth-service_response_time",
+    "value": 162.8788980688727,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "milliseconds",
+    "source": "demo",
+    "service": "auth-service",
+    "metric_type": "response_time"
+  },
+  {
+    "name": "auth-service_error_rate",
+    "value": 1.1594556666258102,
+    "timestamp": "2025-06-20 09:49:05.920940",
+    "unit": "percent",
+    "source": "demo",
+    "service": "auth-service",
+    "metric_type": "error_rate"
+  }
+]
