@@ -1,165 +1,93 @@
-name: 🚀 AIOps CI/CD
+name: AIOps Platform CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ '*' ]
+
+env:
+  PYTHON_VERSION: '3.10'
+  PIP_CACHE_DIR: ~/.cache/pip
+  POETRY_CACHE_DIR: ~/.cache/poetry
 
 jobs:
-  test:
+  lint-test:
+    name: Lint and Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
-
     steps:
-      - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ env.PIP_CACHE_DIR }}
+          ${{ env.POETRY_CACHE_DIR }}
+        key: ${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml') }}
+        
+    - name: Install dependencies
+      run: |
+        pip install poetry
+        poetry install --no-interaction
+        
+    - name: Lint with flake8
+      run: |
+        poetry run flake8 src tests --count --show-source --statistics
+        
+    - name: Format check with Black
+      run: |
+        poetry run black --check src tests
+        
+    - name: Run tests with pytest
+      run: |
+        poetry run pytest -v tests/ --cov=src --cov-report=xml
+        
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
 
-      - name: 🐍 Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: 📦 Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: 📦 Install Python dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-cov black flake8 mypy bandit
-
-      - name: 🧪 Run tests
-        run: |
-          python -m pytest tests/ -v --cov=src --cov-report=xml --cov-fail-under=0
-
-      - name: 📏 Lint and format check
-        run: |
-          black . --check
-          flake8 src/ --max-line-length=88
-          mypy src/ --ignore-missing-imports
-
-      - name: 🔍 Security check
-        run: |
-          bandit -r src/ -f json -o bandit-report.json
-
-      - name: 📤 Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report-${{ matrix.python-version }}
-          path: coverage.xml
-
-      - name: 📤 Upload security report
-        uses: actions/upload-artifact@v4
-        with:
-          name: bandit-report
-          path: bandit-report.json
-
-  build:
+  build-docker:
+    name: Build and Push Docker Image
+    needs: lint-test
     runs-on: ubuntu-latest
-    needs: test
-    strategy:
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-      - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🐍 Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: 📦 Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: 📦 Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 📦 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-          cache: "npm"
-
-      - name: 📦 Install Node.js dependencies
-        run: npm ci
-
-      - name: 🔨 Build application
-        run: |
-          python -c "import src; print('Python build validation successful')"
-          npm run build # Assumes a build script in package.json
-
-      - name: 📊 Generate demo data
-        run: |
-          python demo/demo_data_generator.py
-
-      - name: 🧪 Run demo
-        run: |
-          python demo/demo_aiops.py
-
-      - name: 📤 Upload demo data
-        uses: actions/upload-artifact@v4
-        with:
-          name: demo-data
-          path: |
-            demo/demo_alerts.json
-            demo/demo_current_data.json
-            demo/demo_historical_data.json
-
-  deploy-staging:
-    runs-on: ubuntu-latest
-    needs: [test, build]
     if: github.ref == 'refs/heads/main'
-    environment: staging
-
     steps:
-      - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: 📦 Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: 📦 Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 📦 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-          cache: "npm"
-
-      - name: 📦 Install Node.js dependencies
-        run: npm ci
-
-      - name: 🚀 Deploy to staging
-        env:
-          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-          DEPLOY_ENDPOINT: ${{ secrets.STAGING_ENDPOINT }}
-        run: |
-          ./install_aiops.sh --staging
-          python web_dashboard.py --deploy staging
+    - uses: actions/checkout@v4
+    
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Build and push
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:${{ github.sha }}
+          
+  release:
+    name: Create Release
+    needs: build-docker
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        generate_release_notes: true
+        files: |
+          dist/*
