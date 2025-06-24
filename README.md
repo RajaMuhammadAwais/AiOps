@@ -281,24 +281,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Security
 
-For security issues, please email security@aiops.example.com instead of creating public issues.
+For security issues, please email smdevops24@gmail.com instead of creating public issues.
 
-## Roadmap
 
-### Q1 2024
-- [ ] Advanced ML models (XGBoost, Neural Networks)
-- [ ] Multi-cloud deployment support
-- [ ] Enhanced security features
 
-### Q2 2024
-- [ ] Quantum-inspired optimization
-- [ ] Natural language incident investigation
-- [ ] Cross-cloud workload placement
-
-### Q3 2024
-- [ ] Predictive security threat detection
-- [ ] Automated compliance monitoring
-- [ ] Digital twin system modeling
 
 ---
 
