@@ -1,38 +1,40 @@
-[project]
+[tool.poetry]
 name = "repl-nix-workspace"
 version = "0.1.0"
 description = "AIOps platform workspace"
-requires-python = ">=3.11,<4.0"
+authors = ["Your Name <devops24@gmail.com>"]
+package-mode = false
 
-dependencies = [
-    "asyncio-mqtt>=0.16.2",
-    "click>=8.2.1",
-    "elasticsearch>=9.0.2",
-    "flask>=3.1.1",
-    "flask-cors>=6.0.1",
-    "jsonschema>=4.24.0",
-    "matplotlib>=3.10.3",
-    "numpy>=2.3.0",
-    "openai>=1.88.0",
-    "pandas>=2.3.0",
-    "prometheus-client>=0.22.1",
-    "prophet>=1.1.7",
-    "psutil>=7.0.0",
-    "pydantic>=2.11.7",
-    "python-dotenv>=1.1.0",
-    "redis>=6.2.0",
-    "requests>=2.32.4",
-    "rich>=14.0.0",
-    "schedule>=1.2.2",
-    "scikit-learn>=1.7.0",
-    "seaborn>=0.13.2",
-    "watchdog>=6.0.0",
-]
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+asyncio-mqtt = ">=0.16.2"
+click = ">=8.2.1"
+elasticsearch = ">=9.0.2"
+flask = ">=3.1.1"
+flask-cors = ">=6.0.1"
+jsonschema = ">=4.24.0"
+matplotlib = ">=3.10.3"
+numpy = ">=2.3.0"
+openai = ">=1.88.0"
+pandas = ">=2.3.0"
+prometheus-client = ">=0.22.1"
+prophet = ">=1.1.7"
+psutil = ">=7.0.0"
+pydantic = ">=2.11.7"
+python-dotenv = ">=1.1.0"
+redis = ">=6.2.0"
+requests = ">=2.32.4"
+rich = ">=14.0.0"
+schedule = ">=1.2.2"
+scikit-learn = ">=1.7.0"
+seaborn = ">=0.13.2"
+watchdog = ">=6.0.0"
 
 [[tool.uv.index]]
 explicit = true
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+
 
 [tool.uv.sources]
 AA-module = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
