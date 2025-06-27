@@ -2,7 +2,7 @@
 name = "workspace"
 version = "0.1.0"
 description = "Add your description here"
-requires-python = ">=3.x"
+requires-python = ">=3.11,<4.0"
 dependencies = [
     "asyncio-mqtt>=0.16.2",
     "click>=8.2.1",
