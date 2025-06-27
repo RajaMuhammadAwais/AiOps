@@ -41,6 +41,10 @@ black = "^24.10.0"
 pytest = "^8.4.0"
 pytest-asyncio = "^0.25.0"
 
+[flake8]
+max-line-length = 100
+extend-ignore = E501  # or don't ignore if you want to enforce short lines
+exclude = .venv,__pycache__,.git
 
 [tool.uv.sources]
 AA-module = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
