@@ -43,6 +43,7 @@ pytest-asyncio = "^0.25.0"
 
 [flake8]
 max-line-length = 100
+exclude = .venv,.git,__pycache__
 
 [tool.uv.sources]
 AA-module = [{ index = "pytorch-cpu", marker = "platform_system == 'Linux'" }]
