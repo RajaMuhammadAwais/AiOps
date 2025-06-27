@@ -7,7 +7,7 @@ on:
     branches: [ '*' ]
 
 env:
-  PYTHON_VERSION: '3.10'
+  PYTHON_VERSION: '3.x'
   PIP_CACHE_DIR: ~/.cache/pip
   POETRY_CACHE_DIR: ~/.cache/poetry
 
