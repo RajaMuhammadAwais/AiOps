@@ -1,8 +1,9 @@
 [project]
-name = "workspace"
+name = "repl-nix-workspace"
 version = "0.1.0"
-description = "Add your description here"
+description = "AIOps platform workspace"
 requires-python = ">=3.11,<4.0"
+
 dependencies = [
     "asyncio-mqtt>=0.16.2",
     "click>=8.2.1",
