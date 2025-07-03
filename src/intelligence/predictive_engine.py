@@ -144,6 +144,21 @@ class PredictiveIntelligenceEngine:
             logger.error(f"Error predicting system failures: {e}")
             return {'prediction': 'error', 'message': str(e)}
     
+    def explain_root_cause(self, incidents: list) -> str:
+        """Generate a root cause suggestion for a group of incidents (simple heuristic/placeholder)."""
+        if not incidents:
+            return "No incidents to analyze."
+        descriptions = ' '.join([str(i.get('description','')).lower() for i in incidents])
+        if 'cpu' in descriptions:
+            return "High CPU usage detected. Possible resource contention or traffic spike."
+        if 'disk' in descriptions:
+            return "Disk issues detected. Check storage and IO."
+        if 'timeout' in descriptions:
+            return "Timeouts detected. Check dependencies and network."
+        if 'memory' in descriptions:
+            return "Memory issues detected. Possible memory leak or resource exhaustion."
+        return "No clear root cause found. Further investigation required."
+    
     def _get_threshold_for_metric(self, metric_type: str) -> float:
         """Get threshold values for different metric types"""
         thresholds = {

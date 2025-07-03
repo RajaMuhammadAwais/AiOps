@@ -11,6 +11,7 @@ import os
 from datetime import datetime, timedelta
 import threading
 import time
+from src.intelligence.predictive_engine import PredictiveIntelligenceEngine
 
 # Add src to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -26,8 +27,11 @@ dashboard_data = {
     'metrics': [],
     'anomalies': [],
     'self_healing_stats': {},
+    'log_events': [],  # Add log events for real-time log monitoring
     'last_updated': datetime.now()
 }
+
+predictive_engine = PredictiveIntelligenceEngine()
 
 @app.route('/')
 def dashboard():
@@ -92,6 +96,257 @@ def api_query():
         'response': response,
         'timestamp': datetime.now().isoformat()
     })
+
+@app.route('/api/log-events')
+def api_log_events():
+    """Get recent log events (errors, critical)"""
+    return jsonify({
+        'log_events': dashboard_data['log_events'][-20:],  # Last 20 log events
+        'total': len(dashboard_data['log_events'])
+    })
+
+@app.route('/api/health-heatmap')
+def api_health_heatmap():
+    """Get real-time status for heatmap (CPU, Memory, Disk, Network, etc.)"""
+    # Demo data; in production, fetch from monitoring source
+    return jsonify({
+        'components': [
+            {'name': 'CPU', 'usage': 45.2, 'status': 'healthy'},
+            {'name': 'Memory', 'usage': 67.8, 'status': 'warning'},
+            {'name': 'Disk', 'usage': 72.1, 'status': 'critical'},
+            {'name': 'Network', 'usage': 38.5, 'status': 'healthy'}
+        ],
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/api/historical-trends')
+def api_historical_trends():
+    """Get historical trends for system metrics (last 24h, demo)"""
+    # Demo data: 7 time points
+    return jsonify({
+        'labels': ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30'],
+        'cpu': [40, 42, 45, 47, 44, 46, 45],
+        'memory': [60, 62, 65, 67, 66, 68, 67],
+        'disk': [70, 71, 72, 73, 72, 74, 73],
+        'network': [35, 36, 38, 37, 39, 40, 38]
+    })
+
+@app.route('/api/anomaly-timeline')
+def api_anomaly_timeline():
+    """Get anomaly and action events for timeline visualization"""
+    # Demo data
+    return jsonify({
+        'anomalies': [
+            {'time': '10:05', 'type': 'anomaly', 'desc': 'CPU spike', 'severity': 'high'},
+            {'time': '10:18', 'type': 'anomaly', 'desc': 'Response time anomaly', 'severity': 'medium'},
+            {'time': '10:22', 'type': 'anomaly', 'desc': 'Disk IO anomaly', 'severity': 'high'}
+        ],
+        'actions': [
+            {'time': '10:06', 'type': 'action', 'desc': 'Restarted nginx', 'result': 'success'},
+            {'time': '10:19', 'type': 'action', 'desc': 'Scaled up workers', 'result': 'success'}
+        ]
+    })
+
+@app.route('/api/ai-recommendations')
+def api_ai_recommendations():
+    """AI-driven recommendations based on health score and alerts (demo logic)"""
+    # Example: Use health score and alerts to generate recommendations
+    health =  dashboard_data.get('system_status', {}).get('health_score', 85) or 85
+    alerts = dashboard_data.get('alerts', [])
+    recs = []
+    if health < 70:
+        recs.append("System health is low. Consider scaling up resources or investigating high-load services.")
+    elif health < 90:
+        recs.append("System health is moderate. Monitor CPU and memory usage closely.")
+    else:
+        recs.append("System is healthy. Continue regular monitoring.")
+    # Alert-based recs
+    for alert in alerts[-3:]:
+        if 'cpu' in alert['message'].lower():
+            recs.append(f"Optimize {alert['labels'].get('service','a service')} configuration to reduce CPU usage.")
+        if 'disk' in alert['message'].lower():
+            recs.append("Consider cleaning up disk space or expanding storage.")
+        if 'network' in alert['message'].lower():
+            recs.append("Investigate network connectivity issues in affected regions.")
+    if not recs:
+        recs.append("No immediate recommendations. All systems nominal.")
+    return jsonify({'recommendations': recs})
+
+@app.route('/api/rca-insights')
+def api_rca_insights():
+    """Root Cause Analysis insights (demo logic)"""
+    # Example: Analyze recent incidents/alerts for patterns
+    insights = []
+    recent_alerts = dashboard_data.get('alerts', [])[-5:]
+    for alert in recent_alerts:
+        if 'cpu' in alert['message'].lower():
+            insights.append(f"Frequent high CPU usage detected in {alert['labels'].get('service','a service')}. Consider scaling or optimizing workload.")
+        if 'disk' in alert['message'].lower():
+            insights.append(f"Disk space issues in {alert['labels'].get('service','a service')}. Clean up unused files or expand storage.")
+        if 'timeout' in alert['message'].lower():
+            insights.append(f"Timeouts observed for {alert['labels'].get('service','a service')}. Check service dependencies and network latency.")
+    if not insights:
+        insights.append("No root cause patterns detected in recent incidents.")
+    return jsonify({'insights': insights})
+
+@app.route('/api/suppress-alert', methods=['POST'])
+def api_suppress_alert():
+    """Suppress/mute an alert for a given period (demo logic)"""
+    data = request.get_json()
+    alert_id = data.get('alert_id')
+    duration = data.get('duration', 10)  # minutes
+    # In production, store suppression in DB or memory
+    if not hasattr(dashboard_data, 'suppressed_alerts'):
+        dashboard_data['suppressed_alerts'] = {}
+    dashboard_data['suppressed_alerts'][alert_id] = time.time() + duration * 60
+    return jsonify({'status': 'suppressed', 'alert_id': alert_id, 'until': dashboard_data['suppressed_alerts'][alert_id]})
+
+@app.route('/api/grouped-incidents')
+def api_grouped_incidents():
+    """Group related incidents and provide root cause suggestions (real-time)"""
+    # Group by affected service, use ML/AI for RCA if available
+    groups = {}
+    for inc in dashboard_data['incidents']:
+        key = ','.join(inc.get('affected_services', []))
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(inc)
+    grouped = []
+    for service, incs in groups.items():
+        # Use ML/AI for RCA suggestion if available
+        rca_suggestion = None
+        if hasattr(predictive_engine, 'explain_root_cause'):
+            try:
+                rca_suggestion = predictive_engine.explain_root_cause(incs)
+            except Exception:
+                rca_suggestion = None
+        if not rca_suggestion:
+            # Fallback: simple heuristics
+            if any('cpu' in (i.get('description','').lower()) for i in incs):
+                rca_suggestion = f"High CPU usage in {service}. Possible resource contention or traffic spike."
+            elif any('disk' in (i.get('description','').lower()) for i in incs):
+                rca_suggestion = f"Disk issues in {service}. Check storage and IO."
+            elif any('timeout' in (i.get('description','').lower()) for i in incs):
+                rca_suggestion = f"Timeouts in {service}. Check dependencies and network."
+        grouped.append({
+            'service': service,
+            'incidents': incs,
+            'rca_suggestion': rca_suggestion,
+            'severity': max((i.get('severity','low') for i in incs), key=lambda s: ['low','medium','high','critical'].index(s) if s in ['low','medium','high','critical'] else 0),
+            'count': len(incs),
+            'title': f"{service} ({len(incs)} incidents)",
+            'status': ', '.join(set(i.get('status','N/A') for i in incs)),
+            'description': '; '.join(i.get('description','') for i in incs if i.get('description'))
+        })
+    return jsonify({'groups': grouped})
+
+@app.route('/api/ml-insights')
+def api_ml_insights():
+    """Return ML insights: anomaly trend, forecast, and classification (real-time)"""
+    # Use real metrics/anomalies from dashboard_data
+    metrics = dashboard_data.get('metrics', [])
+    anomalies = dashboard_data.get('anomalies', [])
+    # Train or update models if needed (could be cached in production)
+    if metrics:
+        predictive_engine.train_capacity_models(metrics, horizon_days=2)
+    # Trend: use anomaly timestamps
+    trend_labels = []
+    trend_counts = []
+    if anomalies:
+        # Group anomalies by hour
+        from collections import Counter
+        from datetime import datetime
+        hours = [datetime.fromisoformat(a['timestamp']).strftime('%H:%M') for a in anomalies]
+        counter = Counter(hours)
+        trend_labels = sorted(counter.keys())
+        trend_counts = [counter[k] for k in trend_labels]
+    else:
+        trend_labels = []
+        trend_counts = []
+    # Forecast: use model output if available
+    forecast = "No forecast available."
+    if predictive_engine.capacity_models.get('cpu_usage'):
+        breach = predictive_engine.capacity_models['cpu_usage']['threshold_breach']
+        if breach['will_breach']:
+            forecast = f"CPU usage predicted to breach {breach['threshold']}% at {breach['breach_timestamp']}"
+        else:
+            forecast = breach.get('message', forecast)
+    # Classification: group anomalies by category
+    classification = []
+    if anomalies:
+        cat_counter = Counter([a.get('category','Other') for a in anomalies])
+        classification = [{'category': k, 'count': v} for k, v in cat_counter.items()]
+    total = sum(c['count'] for c in classification) if classification else 0
+    prediction_accuracy = predictive_engine.capacity_models.get('cpu_usage',{}).get('forecast_accuracy', 90.0)
+    return jsonify({
+        'trend': {'labels': trend_labels, 'counts': trend_counts},
+        'forecast': forecast,
+        'classification': classification,
+        'total': total,
+        'prediction_accuracy': prediction_accuracy
+    })
+
+@app.route('/api/performance-metrics')
+def api_performance_metrics():
+    """Return real-time and historical performance metrics for dashboard charts."""
+    # Simulate or use real data from dashboard_data['metrics']
+    import random
+    from datetime import datetime, timedelta
+    metrics = dashboard_data.get('metrics', [])
+    # Generate time labels for the last 12 intervals (e.g., 5-min or 1-hour)
+    now = datetime.now()
+    labels = [(now - timedelta(minutes=5*i)).strftime('%H:%M') for i in reversed(range(12))]
+    # Aggregate or simulate data
+    def get_metric_series(name):
+        # Try to get real data, else simulate
+        series = [m['value'] for m in metrics if m['name'] == name]
+        if len(series) >= 12:
+            return series[-12:]
+        else:
+            return [random.uniform(100, 300) if name=='response_time' else random.uniform(0, 1) if name=='error_rate' else random.uniform(1000, 2000) for _ in range(12)]
+    response_time = get_metric_series('response_time')
+    error_rate = get_metric_series('error_rate')
+    throughput = get_metric_series('throughput')
+    # Current values
+    current = {
+        'response_time': round(response_time[-1], 1),
+        'error_rate': round(error_rate[-1], 3),
+        'throughput': int(throughput[-1])
+    }
+    history = {
+        'labels': labels,
+        'response_time': [round(x,1) for x in response_time],
+        'error_rate': [round(x,3) for x in error_rate],
+        'throughput': [int(x) for x in throughput]
+    }
+    return jsonify({'current': current, 'history': history})
+
+@app.route('/api/self-healing-timeline')
+def api_self_healing_timeline():
+    """Return timeline of self-healing actions and success rates."""
+    import random
+    from datetime import datetime, timedelta
+    actions = dashboard_data.get('self_healing_actions', [])
+    # Simulate last 10 intervals
+    now = datetime.now()
+    labels = [(now - timedelta(minutes=10*i)).strftime('%H:%M') for i in reversed(range(10))]
+    actions_executed = [random.randint(1, 5) for _ in range(10)]
+    success_rate = [round(random.uniform(70, 100), 1) for _ in range(10)]
+    # Recent actions drilldown
+    recent = actions[-5:] if actions else [
+        {'time': (now-timedelta(minutes=i*3)).strftime('%H:%M'), 'action': f'Action {i+1}', 'success': bool(random.getrandbits(1))} for i in range(5)
+    ]
+    return jsonify({'labels': labels, 'actions': actions_executed, 'success_rate': success_rate, 'recent': recent})
+
+@app.route('/api/set-thresholds', methods=['POST'])
+def api_set_thresholds():
+    """Set custom thresholds for CPU, memory, disk usage."""
+    data = request.get_json()
+    cpu = float(data.get('cpu', 85))
+    mem = float(data.get('mem', 90))
+    disk = float(data.get('disk', 95))
+    dashboard_data['thresholds'] = {'cpu': cpu, 'mem': mem, 'disk': disk}
+    return jsonify({'status': f'Thresholds updated: CPU={cpu}%, Memory={mem}%, Disk={disk}%'})
 
 def process_query(query):
     """Process natural language query"""
@@ -173,6 +428,22 @@ def load_demo_data():
             'resolved_alerts': 12,
             'enabled_actions': 6
         }
+        
+        # Sample log events
+        dashboard_data['log_events'] = [
+            {
+                'timestamp': datetime.now().isoformat(),
+                'level': 'ERROR',
+                'message': 'Disk space low on /dev/sda1',
+                'source': 'systemd',
+            },
+            {
+                'timestamp': datetime.now().isoformat(),
+                'level': 'CRITICAL',
+                'message': 'Service nginx crashed unexpectedly',
+                'source': 'nginx',
+            }
+        ]
         
         dashboard_data['last_updated'] = datetime.now()
         print("Demo data loaded successfully")

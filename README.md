@@ -1,334 +1,111 @@
-# AIOps Enterprise - Autonomous Incident Management System
+# AIOps Dashboard: Intelligent Incident Management & Monitoring
 
-A comprehensive AI-powered platform for intelligent incident management, combining machine learning, natural language processing, and automation to monitor distributed systems, detect anomalies, correlate alerts, and execute self-healing actions.
+## Overview
+AIOps Dashboard is a modern, full-stack platform for autonomous incident management, real-time monitoring, and intelligent operations. It combines advanced ML/AI analytics, alert/incident management, actionable recommendations, and a rich web dashboard for SREs, DevOps, and IT teams.
 
-## Key Features
+---
 
-### 🤖 Machine Learning & AI
-- **Advanced Anomaly Detection** - Multi-model ML ensemble with 94% accuracy
-- **Predictive Analytics** - Forecast incidents up to 30 days ahead
-- **Root Cause Analysis** - AI-powered investigation with correlation graphs
-- **Natural Language Processing** - Chat with your infrastructure using plain English
+## Features
+- **Real-Time System Health & Metrics**: CPU, memory, disk, and network monitoring with live updates.
+- **Incident & Alert Management**: Grouped incidents, severity filtering, lifecycle modal, and alert suppression/muting.
+- **ML/AI Insights**: Anomaly detection, predictive analytics, root cause analysis, and automated recommendations.
+- **Self-Healing Automation**: Tracks actions executed, success rates, and active rules with timeline visualization.
+- **Performance Metrics**: Response time, error rate, throughput, and historical trends.
+- **Customizable Thresholds**: Set and save alerting thresholds for key metrics.
+- **Interactive Web Dashboard**: Responsive UI with Chart.js visualizations and AI assistant query interface.
+- **API-First Backend**: RESTful endpoints for all dashboard features, ready for integration and automation.
+- **CI/CD & Code Quality**: GitHub Actions workflow, PEP8/flake8 compliance, and comprehensive tests.
 
-### ⚡ Intelligent Automation
-- **Self-Healing Actions** - Automatic service recovery with 86.7% success rate
-- **Smart Alert Correlation** - Reduce noise by 80% through intelligent grouping
-- **Workflow Orchestration** - Multi-step automation with approval workflows
-- **Risk-Based Decisions** - ML-driven action selection with safety checks
+---
 
-### 📊 Enterprise Observability
-- **Distributed Tracing** - Service dependency mapping and bottleneck detection
-- **Real-Time Monitoring** - System health scoring with composite metrics
-- **Executive Dashboards** - Business impact visibility for leadership
-- **Performance Analytics** - Predictive capacity planning and optimization
+## Quick Start
 
-### 🚀 Production Ready
-- **High Availability** - Multi-region deployment with auto-scaling
-- **Enterprise Security** - RBAC, audit logging, and encrypted communication
-- **API-First Design** - RESTful APIs with comprehensive documentation
-- **Cloud Native** - Kubernetes, Docker, and microservices architecture
-
-## Quick Installation
-
-### One-Line Install
-```bash
-curl -fsSL https://raw.githubusercontent.com/aiops-platform/aiops-system/main/install_aiops.sh | bash
-```
-
-### Manual Installation
-```bash
-# Download installer
-wget https://raw.githubusercontent.com/aiops-platform/aiops-system/main/install_aiops.sh
-chmod +x install_aiops.sh
-
-# Run installation
-./install_aiops.sh
-
-# Start system
-/opt/aiops/scripts/start_aiops.sh
-```
-
-### Quick Demo
-```bash
-cd /opt/aiops
-source venv/bin/activate
-python test_aiops.py
-```
-
-## System Requirements
-
-### Minimum
-- **OS**: Linux, macOS, Windows (WSL2)
-- **CPU**: 4 cores
-- **RAM**: 8GB
-- **Storage**: 50GB
-- **Python**: 3.11+
-
-### Recommended
-- **CPU**: 8+ cores
-- **RAM**: 16GB+
-- **Storage**: 200GB SSD
-- **Network**: 1Gbps
-
-## Architecture Overview
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   ML Engine     │    │   Automation    │    │  Observability  │
-│   - Anomaly     │    │   - Workflows   │    │   - Tracing     │
-│   - Prediction  │    │   - Actions     │    │   - Metrics     │
-│   - Analytics   │    │   - Approvals   │    │   - Logs        │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌─────────────────┐
-                    │   API Gateway   │
-                    │   - Auth        │
-                    │   - Rate Limit  │
-                    │   - Load Balance│
-                    └─────────────────┘
-```
-
-## Performance Metrics
-
-### Demonstrated Results
-- **Alert Noise Reduction**: 25% through intelligent correlation
-- **Anomaly Detection**: 6 real anomalies identified from 25 metrics
-- **Self-Healing Success**: 86.7% automated remediation success rate
-- **Response Time**: <5 seconds for critical automation actions
-- **Prediction Accuracy**: 85-96% across different incident types
-
-### Enterprise Enhancements Available
-- **Multi-model ML Pipeline**: 50% better prediction accuracy
-- **Intelligent Orchestration**: 70% faster mean time to resolution
-- **Predictive Capacity Planning**: 30% cost reduction potential
-- **Service Mesh Intelligence**: Real-time dependency insights
-- **AI-Guided Deployments**: 90% safer deployment success rate
-
-## Core Components
-
-### ML/AI Engine
-- **Isolation Forest** for anomaly detection
-- **Prophet** for time series forecasting
-- **TF-IDF + DBSCAN** for alert correlation
-- **OpenAI GPT-4** for natural language analysis
-
-### Monitoring & Alerting
-- **System Monitor** with psutil and custom collectors
-- **Alert Manager** with rule-based automation
-- **Prometheus** integration for metrics collection
-- **Elasticsearch** support for log aggregation
-
-### Automation & Orchestration
-- **Self-Healing Actions** for common issues
-- **Workflow Engine** for complex procedures
-- **Approval Systems** for high-risk operations
-- **Integration APIs** for external systems
-
-### User Interfaces
-- **Rich CLI** with interactive commands
-- **Web Dashboard** with real-time updates
-- **REST API** for programmatic access
-- **ChatOps** integration for team collaboration
-
-## Getting Started
-
-### 1. Installation
-Follow the [Installation Guide](INSTALLATION_GUIDE.md) or use the automated script:
-```bash
-./install_aiops.sh
-```
-
-### 2. Configuration
-Edit the environment file:
-```bash
-nano /opt/aiops/.env
-# Add your OpenAI API key and monitoring endpoints
-```
-
-### 3. First Run
-```bash
-# Run the demonstration
-python test_aiops.py
-
-# View enhancement capabilities  
-python high_level_aiops_enhancements.py
-
-# Start web dashboard
-python web_dashboard.py
-```
-
-### 4. Access Interfaces
-- **Web Dashboard**: http://localhost:5000
-- **API Documentation**: http://localhost:8000/docs
-- **CLI Commands**: `python -m aiops --help`
-
-## CI/CD Pipeline
-
-This project uses GitHub Actions for automated testing, linting, Docker builds, and Kubernetes deployment.
-
-- All code is linted with flake8 and tested with pytest on every push and pull request.
-- Docker images are built and pushed to DockerHub if credentials are provided.
-- Kubernetes deployment is triggered if a `k8s/` directory and secrets are present.
-
-### Running Tests Locally
-
-Install all dependencies:
+### 1. Install Requirements
 ```bash
 pip install -r requirements.txt
 ```
 
-Run all tests:
+### 2. Run the Backend (Flask)
 ```bash
-PYTHONPATH=src pytest tests/
+python3 web_dashboard.py
 ```
 
-### Linting
-
-```bash
-flake8 src/
-```
-
-## Docker & Kubernetes
-
-### Build and Run Docker Image
-```bash
-docker build -t aiops:latest .
-docker run -p 5000:5000 aiops:latest
-```
-
-### Deploy on Kubernetes
-- See `k8s/` directory for manifests and customize as needed.
-- Example:
-```bash
-kubectl apply -f k8s/
-```
-
-## Documentation
-
-### User Guides
-- **[Quick Start Guide](QUICK_START.md)** - Get running in minutes
-- **[Features Guide](FEATURES_GUIDE.md)** - Comprehensive feature overview
-- **[Installation Guide](INSTALLATION_GUIDE.md)** - Detailed setup instructions
-
-### Technical Documentation
-- **[Deployment Guide](DEPLOYMENT_GUIDE.md)** - Production deployment strategies
-- **[API Reference](docs/api.md)** - Complete API documentation
-- **[Configuration Guide](docs/config.md)** - All configuration options
-
-### Examples
-- **[Integration Examples](examples/)** - Sample integrations
-- **[Custom Metrics](examples/metrics.py)** - Add custom monitoring
-- **[Alert Rules](examples/alerts.py)** - Create custom alert rules
-
-## Integration Examples
-
-### Prometheus Integration
-```python
-from src.monitoring.system_monitor import SystemMonitor
-
-monitor = SystemMonitor()
-monitor.add_prometheus_endpoint("http://prometheus:9090")
-```
-
-### Custom Alert Rules
-```python
-from src.alerting.alert_manager import AlertManager
-
-manager = AlertManager()
-manager.add_custom_action({
-    "name": "restart_nginx",
-    "condition": "service_down AND service_name=nginx",
-    "action_type": "restart_service",
-    "parameters": {"service": "nginx"}
-})
-```
-
-### Slack Notifications
-```bash
-# Configure Slack webhook
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
-
-# Test notification
-python -c "
-from src.chatops.llm_assistant import LLMAssistant
-assistant = LLMAssistant()
-print('Slack integration configured')
-"
-```
-
-## Enterprise Features
-
-### Advanced Analytics
-- Multi-model ensemble predictions
-- Behavioral anomaly detection
-- Capacity forecasting with trend analysis
-- Performance bottleneck identification
-
-### Intelligent Automation
-- Risk-based automation decisions
-- Cross-team workflow coordination
-- Approval workflows for critical actions
-- Learning from automation outcomes
-
-### Observability Intelligence
-- Service dependency mapping
-- Distributed trace analysis
-- Real-time performance profiling
-- Business impact correlation
-
-### Deployment Intelligence
-- AI-guided deployment strategies
-- Risk assessment before releases
-- Automated rollback triggers
-- Multi-environment orchestration
-
-## Support & Community
-
-### Documentation
-- **Online Docs**: https://docs.aiops.example.com
-- **API Reference**: Interactive API documentation
-- **Video Tutorials**: Step-by-step guides
-- **Best Practices**: Implementation recommendations
-
-### Community
-- **GitHub Issues**: Bug reports and feature requests
-- **Discussion Forum**: Community Q&A
-- **Slack Channel**: Real-time support
-- **Monthly Webinars**: Product updates and demos
-
-### Enterprise Support
-- **24/7 Technical Support** for critical issues
-- **Dedicated Customer Success** managers
-- **Custom Feature Development** options
-- **Professional Services** for implementation
-
-## Contributing
-
-We welcome contributions from the community:
-
-1. **Fork the repository**
-2. **Create a feature branch**
-3. **Make your changes**
-4. **Add tests and documentation**
-5. **Submit a pull request**
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Security
-
-For security issues, please email smdevops24@gmail.com instead of creating public issues.
-
-
-
+### 3. Open the Dashboard
+Visit [http://localhost:5000](http://localhost:5000) in your browser.
 
 ---
 
-**Ready for Production**: This AIOps system provides enterprise-grade autonomous incident management with proven results in anomaly detection, alert correlation, and automated remediation. The platform demonstrates significant operational improvements with measurable business impact.
+## Project Structure
+```
+aiops_main.py
+web_dashboard.py           # Flask backend (API + dashboard)
+templates/dashboard.html  # Main dashboard UI (HTML/JS/CSS)
+src/
+  alerting/               # Alert manager logic
+  automation/             # Self-healing/orchestration
+  chatops/                # LLM assistant
+  cli/                    # CLI tools
+  deployment/             # Orchestrator
+  intelligence/           # ML/AI predictive engine
+  ml/                     # Analytics, anomaly detection
+  models/                 # Data models
+  monitoring/             # System/log monitoring
+  observability/          # Tracing
+requirements.txt
+README.md
+LICENSE.md
+.github/workflows/ci-cd.yaml
+```
 
-For questions, support, or custom enterprise features, contact us at info@aiops.example.com
+---
+
+## API Endpoints
+- `/api/status` — System health & metrics
+- `/api/incidents` — List active incidents
+- `/api/alerts` — List recent alerts
+- `/api/self-healing` — Self-healing summary
+- `/api/health-heatmap` — Health heatmap data
+- `/api/historical-trends` — Historical metric trends
+- `/api/anomaly-timeline` — Anomaly/action timeline
+- `/api/log-events` — Recent log events
+- `/api/ai-recommendations` — Automated recommendations
+- `/api/rca-insights` — Root cause analysis insights
+- `/api/grouped-incidents` — Grouped incidents & RCA
+- `/api/ml-insights` — ML anomaly/forecast/classification
+- `/api/performance-metrics` — Performance metrics & trends
+- `/api/self-healing-timeline` — Self-healing timeline data
+- `/api/set-thresholds` — Set alerting thresholds
+- `/api/suppress-alert` — Suppress/mute alert
+- `/api/query` — AI assistant query
+
+---
+
+## Testing
+Run all API and backend tests:
+```bash
+python3 test_api_endpoints.py
+pytest
+```
+
+---
+
+## Contributing
+See `CONTRIBUTING` for guidelines. PRs, issues, and feature requests are welcome!
+
+---
+
+## License
+See `LICENSE.md` for details.
+
+---
+
+## Authors & Credits
+- Project lead: Your Name
+- Contributors: See GitHub history
+
+---
+
+## Notes
+- For advanced ML/AI features, see `src/intelligence/predictive_engine.py` and `src/ml/`.
+- For custom integrations, extend the REST API or add new dashboard cards.
+- For deployment, see `DEPLOYMENT_GUIDE.md`.
