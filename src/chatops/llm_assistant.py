@@ -80,7 +80,7 @@ class LLMAssistant:
             except json.JSONDecodeError:
                 # Fallback if JSON parsing fails
                 return {
-                    'description': f'Incident: {alert.get("name", "Unknown")}',
+                    'description': f"Incident: {alert.get('name', 'Unknown')}",
                     'explanation': response,
                     'root_cause': 'Analysis provided in explanation',
                     'predicted_time': 30
@@ -88,8 +88,8 @@ class LLMAssistant:
         except Exception as e:
             logger.error(f"Error generating incident explanation: {e}")
             return {
-                'description': f'Alert: {alert.get("name", "Unknown")}',
-                'explanation': f'Error generating AI analysis: {e}',
+                'description': f"Alert: {alert.get('name', 'Unknown')}",
+                'explanation': f"Error generating AI analysis: {e}",
                 'root_cause': 'Unable to determine - analysis failed',
                 'predicted_time': None
             }
