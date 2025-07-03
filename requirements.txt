@@ -20,6 +20,8 @@ jinja2>=3.1.4
 mypy>=1.13.0
 numpy
 openai
+tqdm
+networkx
 paho-mqtt
 pandas
 pre-commit>=4.0.1
@@ -40,6 +42,9 @@ seaborn>=0.13.2
 sqlalchemy>=2.0.36
 uvicorn>=0.32.1
 watchdog>=6.0.0
+
+# Visualization & Web
+matplotlib
 
 # Dev & Testing
 black>=24.10.0

@@ -164,6 +164,47 @@ python web_dashboard.py
 - **API Documentation**: http://localhost:8000/docs
 - **CLI Commands**: `python -m aiops --help`
 
+## CI/CD Pipeline
+
+This project uses GitHub Actions for automated testing, linting, Docker builds, and Kubernetes deployment.
+
+- All code is linted with flake8 and tested with pytest on every push and pull request.
+- Docker images are built and pushed to DockerHub if credentials are provided.
+- Kubernetes deployment is triggered if a `k8s/` directory and secrets are present.
+
+### Running Tests Locally
+
+Install all dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Run all tests:
+```bash
+PYTHONPATH=src pytest tests/
+```
+
+### Linting
+
+```bash
+flake8 src/
+```
+
+## Docker & Kubernetes
+
+### Build and Run Docker Image
+```bash
+docker build -t aiops:latest .
+docker run -p 5000:5000 aiops:latest
+```
+
+### Deploy on Kubernetes
+- See `k8s/` directory for manifests and customize as needed.
+- Example:
+```bash
+kubectl apply -f k8s/
+```
+
 ## Documentation
 
 ### User Guides
