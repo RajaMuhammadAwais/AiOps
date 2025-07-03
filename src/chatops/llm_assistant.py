@@ -85,7 +85,6 @@ class LLMAssistant:
                     'root_cause': 'Analysis provided in explanation',
                     'predicted_time': 30
                 }
-                
         except Exception as e:
             logger.error(f"Error generating incident explanation: {e}")
             return {
