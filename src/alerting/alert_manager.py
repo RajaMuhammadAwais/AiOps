@@ -4,7 +4,7 @@ Alert management and self-healing actions
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import json
 import subprocess
