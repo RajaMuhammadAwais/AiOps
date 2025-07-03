@@ -1,5 +1,7 @@
 import pytest
+
 from test_aiops import SimpleAIOpsDemo
+
 
 def test_aiops_demo_runs_without_crashing():
     """Basic smoke test to ensure demo runs end-to-end"""
