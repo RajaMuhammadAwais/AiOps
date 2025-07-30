@@ -42,6 +42,11 @@ seaborn>=0.13.2
 sqlalchemy>=2.0.36
 uvicorn>=0.32.1
 watchdog>=6.0.0
+s3transfer
+python-engineio
+httpx
+cmdstanpy
+python-socketio
 
 # Visualization & Web
 matplotlib
