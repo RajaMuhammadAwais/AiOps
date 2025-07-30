@@ -22,19 +22,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-  lint-test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.9, 3.10, 3.11]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -84,3 +71,31 @@ jobs:
               repo: context.repo.repo,
               body: `✅ CI Passed!\n\n**Coverage (first 10 lines):**\n\n\`\`\`xml\n${coverage}\n\`\`\``
             });
+
+  versioning:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bump2version
+
+      - name: Bump version and generate release notes
+        run: |
+          bump2version patch
+          echo "Release notes for version $(cat .bumpversion.cfg | grep current_version | cut -d' ' -f3)" > release_notes.txt
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release_notes.txt
