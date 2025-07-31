@@ -27,7 +27,7 @@ jobs:
           pip install -r requirements.txt
     #  - name: Lint with flake8 (all errors)
      #   run: |
-          flake8 src/ --count --show-source --statistics
+       #   flake8 src/ --count --show-source --statistics
       - name: Run tests with coverage
         run: |
           pip install pytest-cov
