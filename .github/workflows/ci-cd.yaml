@@ -9,9 +9,12 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Increased timeout to allow sufficient time for package installation
+
     strategy:
       matrix:
-        python-version: [3.12, 3.9, 3.8]  # Specify exact versions for clarity
+        python-version: [3.13.5, 3.12, 3.9, 3.8, 3.7]  # Added 3.13.5 to the matrix
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,10 +24,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-python-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-python-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [[ "${{ matrix.python-version }}" == "3.7"* ]]; then
+            pip install -r requirements.txt  # Uses aiohttp==3.8.1 for Python 3.7
+          else
+            pip install -r requirements.txt  # Uses the latest aiohttp for Python >= 3.8
 
       - name: Run tests with coverage
         run: |
@@ -34,7 +48,7 @@ jobs:
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml-${{ github.run_id }}  # Using run_id to make the name unique
+          name: coverage-xml-${{ github.run_id }}
           path: coverage.xml
 
   pr-summary:
@@ -52,7 +66,7 @@ jobs:
       - name: Download coverage report
         uses: actions/download-artifact@v4
         with:
-          name: coverage-xml-${{ github.run_id }}  # Matching the unique artifact name
+          name: coverage-xml-${{ github.run_id }}
           path: .
 
       - name: Add PR label
@@ -113,5 +127,5 @@ jobs:
       - name: Upload release notes
         uses: actions/upload-artifact@v4
         with:
-          name: release-notes-${{ github.run_id }}  # Unique name using run_id
+          name: release-notes-${{ github.run_id }}
           path: release_notes.txt
