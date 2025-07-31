@@ -2,18 +2,18 @@ name: AIOps CI/CD
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
   lint-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Increased timeout to allow sufficient time for package installation
+    timeout-minutes: 30
 
     strategy:
       matrix:
-        python-version: [3.13.x, 3.12, 3.12.x]  # Added 3.13.5 to the matrix
+        python-version: [3.13.5, 3.12.3]
 
     steps:
       - name: Checkout code
@@ -36,9 +36,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [[ "${{ matrix.python-version }}" == "3.7"* ]]; then
-            pip install -r requirements.txt  # Uses aiohttp==3.8.1 for Python 3.7
+            pip install -r requirements.txt
           else
-            pip install -r requirements.txt  # Uses the latest aiohttp for Python >= 3.8
+            pip install -r requirements.txt
+          fi
 
       - name: Run tests with coverage
         run: |
@@ -55,19 +56,20 @@ jobs:
     if: github.event_name == 'pull_request'
     needs: lint-test
     runs-on: ubuntu-latest
-    steps:
-      - name: Check if coverage report exists
-        run: |
-          if [ ! -f "coverage.xml" ]; then
-            echo "No coverage report found.";
-            exit 1;
-          fi
 
+    steps:
       - name: Download coverage report
         uses: actions/download-artifact@v4
         with:
           name: coverage-xml-${{ github.run_id }}
           path: .
+
+      - name: Check if coverage report exists
+        run: |
+          if [ ! -f "coverage.xml" ]; then
+            echo "No coverage report found."
+            exit 1
+          fi
 
       - name: Add PR label
         uses: actions-ecosystem/action-add-labels@v1
@@ -93,10 +95,12 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `✅ CI Passed!\n\n**Coverage (first 10 lines):**\n\n\`\`\`xml\n${coverage}\n\`\`\``
+            });
 
   versioning:
     needs: lint-test
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -104,7 +108,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x.x'
+          python-version: '3.x'
 
       - name: Install dependencies
         run: |
@@ -114,15 +118,16 @@ jobs:
       - name: Determine version bump type
         id: bump_type
         run: |
-          if [[ $GITHUB_REF == "refs/heads/main" ]]; then
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
             echo "bump_type=minor" >> $GITHUB_ENV
           else
             echo "bump_type=patch" >> $GITHUB_ENV
+          fi
 
       - name: Bump version and generate release notes
         run: |
           bump2version ${{ env.bump_type }}
-          echo "Release notes for version $(cat .bumpversion.cfg | grep current_version | cut -d' ' -f3)" > release_notes.txt
+          echo "Release notes for version $(grep current_version .bumpversion.cfg | cut -d' ' -f3)" > release_notes.txt
 
       - name: Upload release notes
         uses: actions/upload-artifact@v4
