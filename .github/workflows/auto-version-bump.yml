@@ -24,5 +24,8 @@ jobs:
       - name: Bump patch version
         run: bump2version patch
       - name: Push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
           git push --follow-tags origin main
