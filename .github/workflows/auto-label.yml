@@ -1,0 +1,16 @@
+name: Auto Label Issues
+on:
+  issues:
+    types: [opened, edited]
+jobs:
+  auto-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto label by keywords
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          labels: |
+            bug:bug,error,fail
+            enhancement:feature,improve,enhance
+            question:how,help,question
