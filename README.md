@@ -99,13 +99,10 @@ See `LICENSE.md` for details.
 
 ---
 
-## Authors & Credits
-- Project lead: Your Name
-- Contributors: See GitHub history
-
 ---
 
 ## Notes
 - For advanced ML/AI features, see `src/intelligence/predictive_engine.py` and `src/ml/`.
 - For custom integrations, extend the REST API or add new dashboard cards.
 - For deployment, see `DEPLOYMENT_GUIDE.md`.
+
