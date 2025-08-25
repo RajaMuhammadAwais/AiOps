@@ -1,59 +1,28 @@
-name: AI Multi-Issue Creator
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  create-issues:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate issues with OpenAI
+      - name: Generate AIOps Issues via OpenAI
         id: ai
-        uses: openai/openai-cookbook/actions/chat-completion@main
+        uses: cahaseler/openai-chatgpt-action@v1
         with:
-          model: gpt-4o-mini
-          messages: |
+          apiKey: ${{ secrets.OPENAI_API_KEY }}
+          prompt: |
+            You are an expert reviewer focusing on AIOps (AI for IT Ops). Analyze this repository and suggest actionable GitHub issues. Consider:
+            - Bugs or errors
+            - Documentation gaps
+            - Refactoring opportunities
+            - Test coverage
+            - Monitoring & observability
+            - Data/ML pipeline improvements
+            - Automation gaps
+
+            Return a JSON array:
             [
               {
-                "role": "system",
-                "content": "You are an expert software reviewer specializing in AIOps (Artificial Intelligence for IT Operations). Your job is to analyze repositories and propose clear, actionable GitHub issues."
-              },
-              {
-                "role": "user",
-                "content": "This repository is related to AIOps.\n\nPlease scan the repository and suggest issues in JSON format. Consider the following categories:\n- Bugs or possible errors\n- Missing or unclear documentation\n- Code quality / refactoring opportunities\n- Missing tests\n- Monitoring & observability improvements\n- Data pipeline or ML model improvements\n- Automation gaps\n\nReturn a JSON array like this:\n[\n  {\"title\": \"Issue title\", \"body\": \"Detailed description\", \"labels\": [\"bug\", \"aiops\"]},\n  {\"title\": \"Another issue\", \"body\": \"Details here\", \"labels\": [\"enhancement\", \"documentation\"]}\n]"
+                "title": "Issue title",
+                "body": "Detailed description",
+                "labels": ["label1", "aiops"]
               }
             ]
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-      - name: Save AI output
-        run: echo '${{ steps.ai.outputs.completion }}' > ai_issues.json
-
-      - name: Create Issues from JSON with Deduplication
-        run: |
-          issues=$(cat ai_issues.json | jq -c '.[]')
-          for issue in $issues; do
-            title=$(echo $issue | jq -r '.title')
-            body=$(echo $issue | jq -r '.body')
-            labels=$(echo $issue | jq -r '.labels | join(",")')
-
-            echo "🔎 Checking if issue already exists: $title"
-            existing=$(gh issue list --search "$title in:title" --json title --jq '.[].title')
-
-            if echo "$existing" | grep -Fxq "$title"; then
-              echo "⚠️ Skipping duplicate issue: $title"
-            else
-              echo "📌 Creating issue: $title"
-              gh issue create \
-                --title "$title" \
-                --body "$body" \
-                --label "$labels"
-            fi
-          done
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          input: |
+            /* Optionally include repo structure or key files here */
+          model: 'gpt-3.5-turbo'
+          temperature: 0.7
+          max_tokens: 1000
