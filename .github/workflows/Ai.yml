@@ -12,12 +12,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Parse coverage.xml into a JSON summary
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install coverage xmltodict jq
+
+      - name: Run tests with coverage
+        run: |
+          coverage run -m pytest
+          coverage xml -o coverage.xml
+
       - name: Convert coverage.xml to JSON
         run: |
-          pip install xmltodict jq
           python - <<'EOF'
-          import xmltodict, json, math
+          import xmltodict, json
 
           def coverage_label(rate):
               pct = int(rate * 100)
@@ -62,7 +75,6 @@ jobs:
               json.dump(issues, f, indent=2)
           EOF
 
-      # Create issues from JSON with deduplication
       - name: Create GitHub Issues
         run: |
           issues=$(cat ai_coverage_issues.json | jq -c '.[]')
