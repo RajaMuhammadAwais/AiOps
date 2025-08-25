@@ -1,14 +1,33 @@
-name: Mark stale issues
+name: Issues Doc Generator
+
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *" # daily
+  workflow_dispatch:
+
 jobs:
-  stale:
+  generate-doc:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/checkout@v4
+
+      - name: Fetch Issues and Generate Doc
+        uses: octokit/request-action@v2
+        id: get_issues
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          stale-issue-message: 'This issue has been inactive for 30 days. Please update or it will be closed.'
-          days-before-stale: 30
-          days-before-close: 7
+          route: GET /repos/${{ github.repository }}/issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save Issues to File
+        run: |
+          echo "# Open Issues" > ISSUES.md
+          echo "${{ steps.get_issues.outputs.data }}" | jq -r '.[] | "- [\(.title)](\(.html_url))"' >> ISSUES.md
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "ymlbot"
+          git config --global user.email "actions@github.com"
+          git add ISSUES.md
+          git commit -m "Update issues doc"
+          git push
