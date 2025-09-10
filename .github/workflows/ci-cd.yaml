@@ -2,9 +2,12 @@ name: AIOps CI/CD
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
+    tags:
+      - "v*.*.*"
   pull_request:
-    branches: [main, master]
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   lint-test:
@@ -13,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: [3.12.3]
+        python-version: [3.11, 3.12]
 
     steps:
       - name: Checkout code
@@ -35,11 +38,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [[ "${{ matrix.python-version }}" == "3.7"* ]]; then
-            pip install -r requirements.txt
-          else
-            pip install -r requirements.txt
-          fi
+
+          pip install -r requirements.txt
+          pip install black mypy
+      - name: Lint with flake8 (all errors)
+        run: |
+          flake8 src/ --count --show-source --statistics
+      - name: Check formatting (black)
+        run: |
+          black --check .
+      - name: Static type check (mypy)
+        run: |
+          mypy src || true
 
       - name: Run tests with coverage
         run: |
@@ -97,7 +107,48 @@ jobs:
               body: `✅ CI Passed!\n\n**Coverage (first 10 lines):**\n\n\`\`\`xml\n${coverage}\n\`\`\``
             });
 
+  build-artifacts:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint-test, build-artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   versioning:
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
     needs: lint-test
     runs-on: ubuntu-latest
 
@@ -126,8 +177,9 @@ jobs:
 
       - name: Bump version and generate release notes
         run: |
-          bump2version ${{ env.bump_type }}
-          echo "Release notes for version $(grep current_version .bumpversion.cfg | cut -d' ' -f3)" > release_notes.txt
+
+          bump2version patch
+          echo "Release notes for version $(grep current_version .bumpversion.cfg | awk '{print $3}')" > release_notes.txt
 
       - name: Upload release notes
         uses: actions/upload-artifact@v4
