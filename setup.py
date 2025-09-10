@@ -63,7 +63,7 @@ dev_requirements = [
 
 setup(
     name='aiops-dashboard',
-    version="0.4.7",
+    version="0.4.8",
     author='Muhammad Awais Turk',
     author_email='muhammmadawaisturk1@gmail.com',
     description='AIOps Dashboard for Real-Time Monitoring, Incident Management, and Self-Healing Automation',
