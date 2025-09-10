@@ -16,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: [3.11, 3.12.x, 3.x]
+        python-version: [3.10, 3.11, 3.12]
 
     steps:
       - name: Checkout code
@@ -27,33 +27,38 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache Python dependencies
+      - name: Cache pip dependencies
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-python-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
           restore-keys: |
-            ${{ runner.os }}-python-
+            ${{ runner.os }}-pip-
+
+      - name: Check required files
+        run: |
+          test -f requirements.txt || (echo "❌ Missing requirements.txt" && exit 1)
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-
           pip install -r requirements.txt
-          pip install black mypy
-      - name: Lint with flake8 (all errors)
+          pip install black mypy flake8 pytest pytest-cov
+
+      - name: Lint with flake8
         run: |
           flake8 src/ --count --show-source --statistics
-      - name: Check formatting (black)
+
+      - name: Check formatting with black
         run: |
           black --check .
-      - name: Static type check (mypy)
+
+      - name: Static type checks with mypy
         run: |
-          mypy src || true
+          mypy src
 
       - name: Run tests with coverage
         run: |
-          pip install pytest-cov
           PYTHONPATH=src pytest --cov=src --cov-report=xml tests/
 
       - name: Upload coverage report
@@ -110,17 +115,21 @@ jobs:
   build-artifacts:
     needs: lint-test
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Build wheel and sdist
         run: |
           python -m pip install --upgrade pip build
           python -m build
+
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -131,14 +140,17 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [lint-test, build-artifacts]
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -159,9 +171,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Check version config exists
+        run: |
+          test -f .bumpversion.cfg || (echo "❌ Missing .bumpversion.cfg" && exit 1)
+
+      - name: Install bump2version
         run: |
           python -m pip install --upgrade pip
           pip install bump2version
@@ -169,7 +185,7 @@ jobs:
       - name: Determine version bump type
         id: bump_type
         run: |
-          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
             echo "bump_type=minor" >> $GITHUB_ENV
           else
             echo "bump_type=patch" >> $GITHUB_ENV
@@ -177,8 +193,7 @@ jobs:
 
       - name: Bump version and generate release notes
         run: |
-
-          bump2version patch
+          bump2version ${{ env.bump_type }}
           echo "Release notes for version $(grep current_version .bumpversion.cfg | awk '{print $3}')" > release_notes.txt
 
       - name: Upload release notes
