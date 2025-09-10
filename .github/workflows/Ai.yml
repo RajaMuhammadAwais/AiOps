@@ -1,0 +1,100 @@
+name: AI Coverage Issue Creator
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  create-coverage-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install coverage xmltodict jq
+
+      - name: Run tests with coverage
+        run: |
+          coverage run -m pytest
+          coverage xml -o coverage.xml
+
+      - name: Convert coverage.xml to JSON
+        run: |
+          python - <<'EOF'
+          import xmltodict, json
+
+          def coverage_label(rate):
+              pct = int(rate * 100)
+              if pct == 0:
+                  return "coverage-0%"
+              elif pct < 25:
+                  return "coverage-25%"
+              elif pct < 50:
+                  return "coverage-50%"
+              elif pct < 75:
+                  return "coverage-75%"
+              else:
+                  return "coverage-100%"
+
+          with open("coverage.xml") as f:
+              data = xmltodict.parse(f.read())
+
+          packages = data["coverage"]["packages"]["package"]
+          if isinstance(packages, dict):
+              packages = [packages]
+
+          issues = []
+          for pkg in packages:
+              classes = pkg["classes"]["class"]
+              if isinstance(classes, dict):
+                  classes = [classes]
+              for cls in classes:
+                  rate = float(cls.get("@line-rate", 0))
+                  if rate < 0.5:  # less than 50% coverage → create issue
+                      label = coverage_label(rate)
+                      issues.append({
+                          "title": f"Add/Improve tests for {cls['@filename']}",
+                          "body": (
+                              f"The file `{cls['@filename']}` has very low test coverage ({rate*100:.1f}%).\n\n"
+                              f"Please add unit tests to cover core logic, edge cases, and failure handling.\n\n"
+                              f"This is critical for AIOps reliability."
+                          ),
+                          "labels": ["testing", "aiops", label]
+                      })
+
+          with open("ai_coverage_issues.json", "w") as f:
+              json.dump(issues, f, indent=2)
+          EOF
+
+      - name: Create GitHub Issues
+        run: |
+          issues=$(cat ai_coverage_issues.json | jq -c '.[]')
+          for issue in $issues; do
+            title=$(echo $issue | jq -r '.title')
+            body=$(echo $issue | jq -r '.body')
+            labels=$(echo $issue | jq -r '.labels | join(",")')
+
+            echo "🔎 Checking if issue exists: $title"
+            existing=$(gh issue list --search "$title in:title" --json title --jq '.[].title')
+
+            if echo "$existing" | grep -Fxq "$title"; then
+              echo "⚠️ Skipping duplicate: $title"
+            else
+              echo "📌 Creating: $title"
+              gh issue create \
+                --title "$title" \
+                --body "$body" \
+                --label "$labels"
+            fi
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

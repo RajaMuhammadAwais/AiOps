@@ -1,0 +1,12 @@
+name: Auto Assign Issues
+on:
+  issues:
+    types: [opened]
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign issue to team member
+        uses: pozil/auto-assign-issue@v1.10.0
+        with:
+          assignees: RajaMuhammadAwais

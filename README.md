@@ -1,5 +1,15 @@
 # AIOps Dashboard: Intelligent Incident Management & Monitoring
 
+<!-- Badges -->
+[![Build Status](https://github.com/RajaMuhammadAwais/AiOps/actions/workflows/ci-cd.yaml/badge.svg)](https://github.com/RajaMuhammadAwais/AiOps/actions)
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/github/license/RajaMuhammadAwais/AiOps)](./License.md)
+[![Contributors](https://img.shields.io/github/contributors/RajaMuhammadAwais/AiOps)](https://github.com/RajaMuhammadAwais/AiOps/graphs/contributors)
+[![Issues](https://img.shields.io/github/issues/RajaMuhammadAwais/AiOps)](https://github.com/RajaMuhammadAwais/AiOps/issues)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/RajaMuhammadAwais/AiOps?label=version)
+
+
+
 ## Overview
 AIOps Dashboard is a modern, full-stack platform for autonomous incident management, real-time monitoring, and intelligent operations. It combines advanced ML/AI analytics, alert/incident management, actionable recommendations, and a rich web dashboard for SREs, DevOps, and IT teams.
 
@@ -99,13 +109,12 @@ See `LICENSE.md` for details.
 
 ---
 
-## Authors & Credits
-- Project lead: Your Name
-- Contributors: See GitHub history
-
 ---
 
 ## Notes
 - For advanced ML/AI features, see `src/intelligence/predictive_engine.py` and `src/ml/`.
 - For custom integrations, extend the REST API or add new dashboard cards.
 - For deployment, see `DEPLOYMENT_GUIDE.md`.
+
+
+

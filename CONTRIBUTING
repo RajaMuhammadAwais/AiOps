@@ -8,6 +8,8 @@ Getting Started
 
 Ways to Contribute
 
+Contributor License Agreement (CLA)
+
 Code Guidelines
 
 Pull Request Process
@@ -84,6 +86,8 @@ Tests are passing ✅
 Code is linted and formatted 💅
 
 The PR includes a clear description of what you changed and why
+
+Before your pull request can be merged, you must sign the Contributor License Agreement (CLA) via CLA Assistant. See [CLA.md](./CLA.md) for details.
 
 We will review and provide feedback within 2–3 working days.
 

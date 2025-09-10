@@ -1,0 +1,36 @@
+name: CLA Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+    branches:
+      - main
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print all PR labels (debug)
+        run: |
+          echo "PR Labels:"
+          echo "${{ toJson(github.event.pull_request.labels) }}"
+      - name: Check for CLA Signed label
+        id: cla_check
+        run: |
+          echo "Checking for 'cla-signed' label..."
+          LABELS=$(echo "${{ toJson(github.event.pull_request.labels) }}" | grep 'cla-signed')
+          if [ -z "$LABELS" ]; then
+            echo "CLA not signed. Please sign the CLA to proceed."
+            echo "::set-output name=cla_signed::false"
+            exit 1
+          else
+            echo "CLA signed, proceeding."
+            echo "::set-output name=cla_signed::true"
+          fi
+      - name: Add job summary
+        run: |
+          if [ "${{ steps.cla_check.outputs.cla_signed }}" = "true" ]; then
+            echo "✅ CLA signed. PR can proceed." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ CLA not signed. PR cannot proceed until CLA is signed." >> $GITHUB_STEP_SUMMARY
+          fi

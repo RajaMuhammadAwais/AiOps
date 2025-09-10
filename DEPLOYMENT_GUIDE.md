@@ -1,5 +1,12 @@
 # Enterprise AIOps System - Deployment Guide
 
+<!-- Badges -->
+[![Build Status](https://github.com/RajaMuhammadAwais/AiOps/actions/workflows/ci-cd.yaml/badge.svg)](https://github.com/RajaMuhammadAwais/AiOps/actions)
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/github/license/RajaMuhammadAwais/AiOps)](./License.md)
+[![Contributors](https://img.shields.io/github/contributors/RajaMuhammadAwais/AiOps)](https://github.com/RajaMuhammadAwais/AiOps/graphs/contributors)
+[![Issues](https://img.shields.io/github/issues/RajaMuhammadAwais/AiOps)](https://github.com/RajaMuhammadAwais/AiOps/issues)
+
 ## System Overview
 
 The Enterprise AIOps platform provides autonomous incident management with advanced ML capabilities, intelligent automation, and comprehensive observability. The system demonstrates production-ready enterprise features with significant enhancements over basic monitoring solutions.
