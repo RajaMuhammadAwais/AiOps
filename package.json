@@ -23,7 +23,7 @@
     "drizzle-zod": "^0.8.2",
     "express": "^5.1.0",
     "inquirer": "^12.6.3",
-    "openai": "^5.5.1",
+    "openai": "^6.5.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "uuid": "^11.1.0",
