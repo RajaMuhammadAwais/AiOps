@@ -1,5 +1,10 @@
 # AiOps Operations Platform
 
+[![Observability: OpenTelemetry](https://img.shields.io/badge/Observability-OpenTelemetry-425CC7?logo=opentelemetry&logoColor=white)](https://opentelemetry.io/docs/concepts/observability-primer/)
+[![AI Governance: NIST AI RMF](https://img.shields.io/badge/AI%20Governance-NIST%20AI%20RMF-1f4e79)](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence)
+[![GenAI Security: OWASP](https://img.shields.io/badge/GenAI%20Security-OWASP-000000?logo=owasp&logoColor=white)](https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/)
+[![Build Integrity: SLSA](https://img.shields.io/badge/Build%20Integrity-SLSA-6f42c1)](https://slsa.dev/spec/v1.2/build-requirements)
+
 AiOps is an integration-backed operations interface for teams that need a single API and dashboard over telemetry, alerting, incidents, operational logs, remediation workflows, and externally hosted analysis. It does not generate or invent operational records. When a source is not configured or cannot be reached, the API returns an explicit integration error and the readiness probe remains unsuccessful.
 
 ## Operating model
