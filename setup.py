@@ -69,7 +69,7 @@ setup(
     description='AIOps Dashboard for Real-Time Monitoring, Incident Management, and Self-Healing Automation',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/yourusername/aiops-dashboard',  # Replace with your actual GitHub URL
+    url='https://github.com/RajaMuhammadAwais/AiOps',
     packages=find_packages(),
     classifiers=[
         'Programming Language :: Python :: 3',
