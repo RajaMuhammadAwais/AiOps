@@ -22,7 +22,7 @@
     "drizzle-orm": "^0.44.2",
     "drizzle-zod": "^0.8.2",
     "express": "^5.1.0",
-    "inquirer": "^12.6.3",
+    "inquirer": "^14.2.3",
     "openai": "^5.5.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
