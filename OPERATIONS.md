@@ -25,19 +25,19 @@ Prometheus and Alertmanager are the first-party operational sources. The inciden
 | `AIOPS_LLM_URL` | OpenAI-compatible chat or response endpoint | Read/write request |
 | `AIOPS_LLM_MODEL` | Deployment-owned model identifier | Read |
 
-Every adapter validates the response shape and converts connection, HTTP, JSON, and schema failures into `integration_unavailable`. The application does not silently use a local fixture, random value, stale sample, or placeholder response.
+Response validation is endpoint-specific, not a uniform guarantee across every configured service. Typed clients enforce their defined response checks; generic JSON endpoints do not yet share versioned schemas or equivalent validation. Some malformed payloads may not map uniformly to the documented unavailable response. Add contract tests for each actual upstream before relying on its route. The application does not silently use a local fixture, random value, stale sample, or placeholder response.
 
 ## Health and reliability semantics
 
 `/health/live` answers whether the Python process can serve HTTP. `/health/ready` checks that the Prometheus and Alertmanager contracts are configured and reachable. A 200 liveness result must not be interpreted as dependency health. The `/api/status` response includes the configured status samples, active alert and incident counts where their sources are configured, and the locally observed request SLO snapshot.
 
-The `/metrics` endpoint exposes request counters and bounded latency samples in Prometheus text format. The `/api/slo` endpoint reports the configured objective, request count, error count, observed availability, budget remaining, budget consumed, and burn rate over the configured window. A production deployment should replace the process-local sample window with durable telemetry aggregation before using it for paging or compliance evidence.
+The `/metrics` endpoint exposes request counters plus duration sum and retained sample count in Prometheus text format. `/api/slo` calculates a snapshot from the same bounded, process-local request window. It counts status codes `>=500` as errors, so 4xx and 429 responses count as available. These values are not durable or shared across workers. Define and validate user-facing SLIs, then use durable telemetry aggregation before relying on SLOs for paging or compliance evidence.
 
 ## Security controls
 
-API routes are protected by `X-AiOps-API-Key` or a bearer token whenever `AIOPS_API_KEY` is configured. Production startup requires an API key of at least 24 characters and an explicit CORS origin list. The service applies a process-local sliding-window limiter, bounds the assistant query, redacts common secret patterns in audit details, and returns a request identifier on every response.
+`/api/*` and `/metrics` accept `X-AiOps-API-Key` or a bearer token when `AIOPS_API_KEY` is configured. Outside production the key can be omitted, leaving these routes unauthenticated; production requires a key of at least 24 characters. Root and health routes are public. `AIOPS_ALLOWED_ORIGINS` is optional; when configured it is an origin allowlist, not a complete preflight or browser-authentication solution. The service applies a process-local sliding-window limiter, bounds the assistant query, redacts common secret patterns in selected audit details, and returns a request identifier on every response.
 
-The browser dashboard assigns source values with `textContent` and does not interpret source payloads as HTML. The assistant policy metadata states that autonomous actions are disabled and human approval is required. The model adapter sends only the assembled context and user question; it does not expose local environment variables, request headers, or audit records to the model.
+The browser dashboard assigns source values with `textContent` and does not interpret source payloads as HTML. Its JavaScript does not send the shared API key; a protected dashboard therefore needs a reviewed same-origin session or gateway that authenticates browser requests. Never embed the service key in client-side code. The assistant policy metadata says autonomous actions are disabled, but the API does not itself create an approval record or role-based authorization check. The model adapter sends the assembled context and user question; local environment variables, request headers, and audit records are not part of that context.
 
 The in-process audit log is bounded and is not a durable compliance store. Deployments must ship structured service logs and audit events to an access-controlled retention system before enabling sensitive write operations in production.
 
@@ -45,7 +45,7 @@ The in-process audit log is bounded and is not a durable compliance store. Deplo
 
 Secrets must be supplied by the deployment secret manager. The repository must not contain live credentials, endpoint-specific bearer tokens, or source fixtures. TLS verification remains enabled by default; disabling it requires an explicit deployment decision and should be limited to controlled test environments.
 
-The service should run behind an identity-aware gateway, with network policy restricting outbound connections to the configured source systems and model gateway. The gateway should enforce organization-level identity, authorization scopes, request body limits, and durable audit retention. A release should be promoted only after readiness succeeds against the intended telemetry and alerting systems.
+The service should run behind an identity-aware gateway, with network policy restricting outbound connections to configured source systems and the model gateway. The gateway should enforce organization-level identity, authorization scopes, request body limits, browser-session behavior, and durable audit retention. Readiness checks only Prometheus and Alertmanager; separately smoke-test each optional integration that the release intends to use.
 
 ## Migration sequence
 
