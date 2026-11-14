@@ -188,7 +188,10 @@ class ModelAdapter:
             "messages": [
                 {
                     "role": "system",
-                    "content": "Answer only from the supplied operational context. State uncertainty when context is insufficient.",
+                    "content": (
+                        "Answer only from the supplied operational context. "
+                        "State uncertainty when context is insufficient."
+                    ),
                 },
                 {"role": "user", "content": query},
             ],

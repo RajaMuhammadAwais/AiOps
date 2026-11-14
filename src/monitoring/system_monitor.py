@@ -364,14 +364,24 @@ class SystemMonitor:
         except:
             return 0
     
-    def check_service_health(self, service_name: str, port: int = None) -> Dict:
+    def check_service_health(
+        self,
+        service_name: str,
+        port: int | None = None,
+        host: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> Dict:
         """Check if a specific service is healthy"""
         try:
-            if port:
+            if port is not None:
+                if host is None or timeout_seconds is None:
+                    raise ValueError(
+                        "host and timeout_seconds are required for a port check"
+                    )
                 # Check if port is open
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(5)
-                result = sock.connect_ex(('localhost', port))
+                sock.settimeout(timeout_seconds)
+                result = sock.connect_ex((host, port))
                 sock.close()
                 
                 if result == 0:

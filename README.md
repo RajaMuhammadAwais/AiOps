@@ -2,7 +2,7 @@
 
 [![Observability: OpenTelemetry](https://img.shields.io/badge/Observability-OpenTelemetry-425CC7?logo=opentelemetry&logoColor=white)](https://opentelemetry.io/docs/concepts/observability-primer/)
 [![AI Governance: NIST AI RMF](https://img.shields.io/badge/AI%20Governance-NIST%20AI%20RMF-1f4e79)](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence)
-[![GenAI Security: OWASP](https://img.shields.io/badge/GenAI%20Security-OWASP-000000?logo=owasp&logoColor=white)](https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/)
+[![GenAI Security: OWASP LLM01:2025](https://img.shields.io/badge/GenAI%20Security-OWASP%20LLM01%3A2025-000000?logo=owasp&logoColor=white)](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
 [![Build Integrity: SLSA](https://img.shields.io/badge/Build%20Integrity-SLSA-6f42c1)](https://slsa.dev/spec/v1.2/build-requirements)
 
 AiOps is a **real-integration operations control plane**. It presents a Flask web dashboard and JSON API over configured operational systems such as Prometheus, Alertmanager, incident services, log services, action services, threshold services, insight services, and an OpenAI-compatible model endpoint.
@@ -94,6 +94,8 @@ The packaging metadata declares **Python `>=3.12,<4.0`**. Use Python 3.12 or a n
 
 The runtime requires network access from the service process to each configured upstream. Production deployments should also provide a managed secret source, an approved ingress or reverse proxy, centralized logs, and a durable audit destination before enabling sensitive operational workflows.
 
+To open the dashboard locally without connecting operational systems, follow [QUICK_START.md](QUICK_START.md). Its local launcher installs only the dashboard dependencies, reads configuration from the caller's environment or `.env`, and does not provide configuration defaults or example telemetry. Configure a loopback bind address for local-only access; readiness and data-dependent routes remain unavailable until real upstreams are configured.
+
 ## Installation
 
 ### Option A: supplied installer
@@ -114,6 +116,8 @@ python3.12 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+For local development, use `./scripts/run-local.sh` instead of installing the full dependency set. It creates a virtual environment and installs `requirements-local.txt`. The dashboard-only dependency list is not a substitute for the full requirements needed by optional analytics and integration modules.
 
 Before starting the service, validate the exact environment that the process will use:
 
@@ -185,12 +189,13 @@ The angle-bracket values above are configuration placeholders, not defaults. Do 
 
 ## Starting the service
 
+For local development without upstream integrations, use the launcher described in [QUICK_START.md](QUICK_START.md) after supplying the required configuration:
+
 ```bash
-. .venv/bin/activate
-python web_dashboard.py
+./scripts/run-local.sh
 ```
 
-For a production deployment, run the process under an approved process manager or container supervisor and place it behind an identity-aware ingress or service mesh. External TLS termination, network policy, secret injection, centralized logging, and durable audit retention belong to the deployment platform.
+The launcher uses Flask's development server and is not a production server. For production, run `web_dashboard:app` under an approved WSGI server such as Gunicorn, process manager, or container supervisor, behind an identity-aware ingress or service mesh. External TLS termination, network policy, secret injection, centralized logging, and durable audit retention belong to the deployment platform.
 
 ## Health and observability
 
@@ -339,26 +344,26 @@ OPERATIONS.md                  deployment and trust-boundary contract
 
 ## Development and validation
 
-Create the environment and install the declared dependencies before running checks:
+Create the environment and install the lightweight development dependency set before running checks:
 
 ```bash
 python3.12 -m venv .venv
 . .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 Run the core validation suite:
 
 ```bash
-python -m compileall -q .
-python -m unittest discover -s tests -v
-black --check web_dashboard.py src tests
-flake8 src/platform tests
+python -m compileall -q web_dashboard.py src tests
+python -m pytest --cov=src --cov-report=xml tests/
+black --check web_dashboard.py src/platform src/monitoring/log_monitor.py tests
+flake8 web_dashboard.py src/platform src/monitoring/log_monitor.py --max-line-length=100 --extend-ignore=E203
 mypy src/platform
- git diff --check
+git diff --check
 ```
 
-The HTTP smoke test requires a running service and real configured upstream systems. Unit and contract tests should not be interpreted as proof that a deployment’s Prometheus, Alertmanager, incident, log, action, threshold, insight, or model endpoint is reachable. Those dependencies require a deployment-level integration test.
+The local smoke test can verify that the dashboard and liveness route start without upstream services. Readiness and data-dependent routes should fail explicitly until real integrations are configured. Unit and contract tests do not prove that a deployment’s Prometheus, Alertmanager, incident, log, action, threshold, insight, or model endpoint is reachable; those dependencies require deployment-level integration tests.
 
 When adding code, preserve these repository rules:
 
@@ -388,6 +393,7 @@ See `LICENSE.md`.
 [3]: https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence "NIST AI RMF Generative AI Profile"
 
 [4]: https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/ "OWASP GenAI LLM Top 10"
+[4]: https://genai.owasp.org/llmrisk/llm01-prompt-injection/ "OWASP LLM01:2025 Prompt Injection"
 
 [5]: https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/ "OWASP Agentic AI Threats and Mitigations"
 

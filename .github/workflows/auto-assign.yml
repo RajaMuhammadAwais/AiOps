@@ -2,11 +2,14 @@ name: Auto Assign Issues
 on:
   issues:
     types: [opened]
+permissions:
+  issues: write
 jobs:
   assign:
     runs-on: ubuntu-latest
+    if: ${{ vars.DEFAULT_ISSUE_ASSIGNEE != '' }}
     steps:
       - name: Assign issue to team member
         uses: pozil/auto-assign-issue@v1.10.0
         with:
-          assignees: RajaMuhammadAwais
+          assignees: ${{ vars.DEFAULT_ISSUE_ASSIGNEE }}

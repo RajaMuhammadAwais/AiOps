@@ -137,7 +137,8 @@ class MetricsRegistry:
             [
                 "# HELP aiops_http_request_duration_seconds_sum Cumulative observed HTTP duration.",
                 "# TYPE aiops_http_request_duration_seconds_sum counter",
-                f'aiops_http_request_duration_seconds_sum{{service="{_escape(service_name)}"}} {total_duration:.6f}',
+                f'aiops_http_request_duration_seconds_sum{{service="{_escape(service_name)}"}} '
+                f"{total_duration:.6f}",
                 "# HELP aiops_http_latency_samples Number of bounded latency samples retained.",
                 "# TYPE aiops_http_latency_samples gauge",
                 f'aiops_http_latency_samples{{service="{_escape(service_name)}"}} {len(samples)}',

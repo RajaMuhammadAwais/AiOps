@@ -60,6 +60,6 @@ The request, metric, and log model is aligned with OpenTelemetry’s observabili
 [1]: https://opentelemetry.io/docs/concepts/observability-primer/ "OpenTelemetry Observability Primer"
 [2]: https://sre.google/workbook/implementing-slos/ "Google SRE Workbook: Implementing SLOs"
 [3]: https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence "NIST AI RMF Generative AI Profile"
-[4]: https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/ "OWASP GenAI LLM Top 10 2026"
+[4]: https://genai.owasp.org/llmrisk/llm01-prompt-injection/ "OWASP LLM01:2025 Prompt Injection"
 [5]: https://docs.github.com/en/actions/reference/security/secure-use "GitHub Actions Secure Use Reference"
 [6]: https://slsa.dev/spec/v1.2/build-requirements "SLSA v1.2 Build Requirements"

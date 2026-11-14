@@ -17,18 +17,20 @@ class LLMAssistant:
     
     def __init__(self):
         self.client = None
-        self.model = "gpt-4o"  # the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
+        self.model = os.getenv("AIOPS_LLM_MODEL")
         self._initialize_client()
     
     def _initialize_client(self):
         """Initialize OpenAI client"""
         try:
-            api_key = os.getenv('OPENAI_API_KEY')
-            if api_key:
+            api_key = os.getenv("AIOPS_LLM_API_KEY")
+            if api_key and self.model:
                 self.client = OpenAI(api_key=api_key)
-                logger.info("OpenAI client initialized successfully")
+                logger.info("Configured model client initialized successfully")
             else:
-                logger.warning("OPENAI_API_KEY not found in environment variables")
+                logger.warning(
+                    "AIOPS_LLM_API_KEY and AIOPS_LLM_MODEL must be configured"
+                )
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
     
@@ -97,7 +99,7 @@ class LLMAssistant:
     async def chat_query(self, query: str, context: Dict) -> str:
         """Process chat query about system status or incidents"""
         if not self.client:
-            return "AI assistant unavailable - OpenAI client not initialized. Please provide OPENAI_API_KEY."
+            return "AI assistant unavailable - configure AIOPS_LLM_API_KEY and AIOPS_LLM_MODEL."
         
         try:
             # Prepare system context
@@ -285,7 +287,7 @@ class LLMAssistant:
         """Make request to OpenAI API"""
         try:
             if not self.client:
-                return "AI assistant unavailable - please provide OPENAI_API_KEY"
+                return "AI assistant unavailable - configure AIOPS_LLM_API_KEY and AIOPS_LLM_MODEL"
                 
             response = self.client.chat.completions.create(
                 model=self.model,

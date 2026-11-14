@@ -81,7 +81,7 @@ setup(
         'Framework :: FastAPI',
         'Framework :: Flask'
     ],
-    python_requires='>=3.8',
+    python_requires='>=3.12',
     install_requires=core_requirements,
     extras_require={
         'dev': dev_requirements

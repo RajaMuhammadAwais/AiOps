@@ -1,8 +1,15 @@
+"""Optional read-only integration smoke test.
+
+Set AIOPS_TEST_BASE_URL and AIOPS_TEST_TIMEOUT_SECONDS explicitly before running.
+This test never invokes mutation routes.
+"""
+
+import os
+
+import pytest
 import requests
 
-BASE_URL = "http://localhost:5000"
-
-endpoints = [
+ENDPOINTS = (
     "/api/status",
     "/api/incidents",
     "/api/alerts",
@@ -17,28 +24,30 @@ endpoints = [
     "/api/ml-insights",
     "/api/performance-metrics",
     "/api/self-healing-timeline",
-]
+)
 
-def test_api():
-    for ep in endpoints:
-        url = BASE_URL + ep
-        try:
-            resp = requests.get(url)
-            print(f"{ep}: {resp.status_code}")
-            print(resp.json())
-        except Exception as e:
-            print(f"{ep}: ERROR - {e}")
 
-# Test POST for /api/set-thresholds
-threshold_url = BASE_URL + "/api/set-thresholds"
-def test_set_thresholds():
-    try:
-        resp = requests.post(threshold_url, json={"cpu": 80, "mem": 85, "disk": 90})
-        print(f"/api/set-thresholds: {resp.status_code}")
-        print(resp.json())
-    except Exception as e:
-        print(f"/api/set-thresholds: ERROR - {e}")
+def test_read_only_api_endpoints():
+    base_url = os.getenv("AIOPS_TEST_BASE_URL")
+    timeout_value = os.getenv("AIOPS_TEST_TIMEOUT_SECONDS")
+    if not base_url or not timeout_value:
+        pytest.skip(
+            "Set AIOPS_TEST_BASE_URL and AIOPS_TEST_TIMEOUT_SECONDS "
+            "to run integration smoke checks"
+        )
 
-if __name__ == "__main__":
-    test_api()
-    test_set_thresholds()
+    headers = {}
+    api_key = os.getenv("AIOPS_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    timeout = float(timeout_value)
+    for endpoint in ENDPOINTS:
+        response = requests.get(
+            f"{base_url.rstrip('/')}{endpoint}",
+            headers=headers,
+            timeout=timeout,
+        )
+        assert response.status_code < 500 or response.status_code == 503, (
+            f"{endpoint} returned unexpected HTTP {response.status_code}"
+        )

@@ -5,17 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 import logging
-import os
-import sys
 import time
 from typing import Any, Mapping
 
 from flask import Flask, Response, g, jsonify, render_template, request
 import requests
-
-ROOT = os.path.dirname(os.path.abspath(__file__))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
 
 from src.platform.config import ConfigurationError, Settings
 from src.platform.integrations import (
