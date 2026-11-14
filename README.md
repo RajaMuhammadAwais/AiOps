@@ -44,27 +44,7 @@ The current `/api/audit` endpoint exposes the legacy bounded in-memory audit log
 
 ## Architecture
 
-```text
-Browser or API client
-        |
-        | HTTPS and identity-aware gateway recommended
-        v
-+-----------------------------+
-| Flask dashboard/API         |
-| - request IDs               |
-| - authentication            |
-| - rate limiting             |
-| - validation and redaction  |
-| - health and SLO endpoints  |
-+-----------------------------+
-        |
-        +--> PrometheusAdapter ----> Prometheus HTTP API
-        +--> AlertmanagerAdapter --> Alertmanager HTTP API
-        +--> External JSON clients -> incidents/logs/actions/insights/thresholds
-        +--> ModelAdapter ----------> configured OpenAI-compatible endpoint
-        +--> bounded local state and metrics
-        +--> bounded in-process audit view
-```
+The live web application is one Flask/WSGI process. It serves the dashboard and API, applies request controls, and calls configured upstream clients. Its limiter, metrics, and legacy audit log are process-local rather than shared or durable. The C4-style system view, request and mutation flows, local setup, trust boundaries, and research-based engineering sequence are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The service creates no upstream system and does not seed local records. The installer creates a Python virtual environment and installs declared dependencies only; it does not provision telemetry, databases, queues, model services, or operational data.
 
@@ -203,7 +183,7 @@ The launcher uses Flask's development server and is not a production server. For
 |---|---|---|
 | `/health/live` | Public | The Python process is running and can return an HTTP response. It does not prove upstream availability. |
 | `/health/ready` | Public | Prometheus and Alertmanager configuration and connectivity satisfy the readiness contract. Returns `503` when requirements are missing or upstream checks fail. |
-| `/metrics` | Protected when `AIOPS_API_KEY` is configured | Prometheus-compatible request count, latency, status, and SLO-related service metrics. |
+| `/metrics` | Protected when `AIOPS_API_KEY` is configured | Prometheus-compatible request counters and bounded duration sum/count. `/api/slo` is a separate process-local snapshot, not exported here. |
 | `X-Request-ID` | Response header | Every response receives a request identifier; a caller-provided identifier is preserved. |
 
 The rate limiter is thread-safe but process-local and keyed by the direct peer address. When deploying multiple workers or replicas, enforce the authoritative rate limit at the gateway or use a shared limiter. Do not assume the in-process limiter is a cluster-wide security control.
@@ -294,7 +274,7 @@ The service is intentionally conservative around missing or untrusted inputs.
 |---|---|
 | Missing required configuration | Process startup fails with a configuration error. |
 | Missing required readiness integration | `/health/ready` returns `503` with the missing setting names. |
-| Upstream timeout, HTTP failure, invalid JSON, or invalid response shape | Dependent route returns `503 integration_unavailable`. |
+| Upstream failure or malformed response | Routes return `503 integration_unavailable` where the adapter/route maps that failure; schema validation is endpoint-specific, not uniform. See [ARCHITECTURE.md](ARCHITECTURE.md). |
 | Invalid JSON body or field type | Route returns `400 invalid_request`. |
 | Missing or incorrect API key when authentication is enabled | Route returns `401 authentication_required`. |
 | Request budget exceeded | Route returns `429 rate_limited`. |
@@ -330,8 +310,8 @@ src/platform/config.py       strict environment configuration and range validati
 src/platform/security.py     authentication, rate limiting, validation, redaction, and legacy audit log
 src/platform/audit.py        versioned audit-event contract and storage-neutral AuditSink protocol
 src/platform/integrations.py Prometheus, Alertmanager, external JSON, and model adapters
-src/platform/observability.py request metrics, structured logging, and SLO calculations
-src/platform/state.py         bounded in-process state store
+src/platform/observability.py process-local request metrics, JSON logging, and SLO snapshots
+src/platform/state.py         bounded in-process store; dashboard writes but does not read it
 src/monitoring/               monitoring components and integration hooks
 src/observability/             tracing components
 src/intelligence/              model and forecasting components
@@ -340,6 +320,7 @@ templates/dashboard.html      integration-backed browser interface
 tests/                         contract and operational tests
 install_aiops.sh               integration-only installer
 OPERATIONS.md                  deployment and trust-boundary contract
+ARCHITECTURE.md                system view, request flows, limits, and engineering roadmap
 ```
 
 ## Development and validation
