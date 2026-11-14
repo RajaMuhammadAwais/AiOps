@@ -10,6 +10,8 @@ Use a supported Python version listed in `pyproject.toml`. Install the operating
 
 ## Source installation
 
+For a local dashboard-only run without upstream services, follow [QUICK_START.md](QUICK_START.md). The launcher reads user-supplied configuration without defaults, installs only dashboard dependencies, and leaves readiness unavailable until real integrations are configured. Configure a loopback bind address if the service should be local-only.
+
 ```bash
 git clone https://github.com/RajaMuhammadAwais/AiOps.git
 cd AiOps

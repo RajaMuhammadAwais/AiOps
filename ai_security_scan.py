@@ -2,7 +2,8 @@ import os
 import subprocess
 import openai
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("AIOPS_LLM_API_KEY")
+LLM_MODEL = os.getenv("AIOPS_LLM_MODEL")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO = os.getenv("GITHUB_REPOSITORY")  # e.g. user/repo
 
@@ -33,7 +34,7 @@ def scan_file(file_path):
         code = f.read()
 
     response = openai.chat.completions.create(
-        model="gpt-5",   # adjust as needed
+        model=LLM_MODEL,
         messages=[
             {"role": "system", "content": "You are a senior application security engineer."},
             {"role": "user", "content": f"{SECURITY_PROMPT}\n\n{code}"}
@@ -52,6 +53,14 @@ def scan_file(file_path):
         )
 
 def main():
+    if not openai.api_key:
+        raise SystemExit("AIOPS_LLM_API_KEY must be supplied in the environment")
+    if not LLM_MODEL:
+        raise SystemExit("AIOPS_LLM_MODEL must be supplied in the environment")
+    if not GITHUB_TOKEN or not REPO:
+        raise SystemExit(
+            "GITHUB_TOKEN and GITHUB_REPOSITORY must be supplied in the environment"
+        )
     for root, _, files in os.walk("."):
         for file in files:
             if any(file.endswith(ext) for ext in TARGET_EXTS):

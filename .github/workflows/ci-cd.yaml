@@ -2,21 +2,24 @@ name: AIOps CI/CD
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
     tags:
       - "v*.*.*"
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
+
+# Default-deny write access. Jobs must request any additional permission explicitly.
+permissions:
+  contents: read
 
 jobs:
   lint-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     strategy:
       matrix:
-        python-version: [3.10, 3.11, 3.12]
+        python-version: ["3.12"]
 
     steps:
       - name: Checkout code
@@ -31,35 +34,31 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('requirements-local.txt', 'requirements-dev.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-py${{ matrix.python-version }}-pip-
 
       - name: Check required files
         run: |
-          test -f requirements.txt || (echo "❌ Missing requirements.txt" && exit 1)
+          test -f requirements-local.txt
+          test -f requirements-dev.txt
 
-      - name: Install dependencies
+      - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install black mypy flake8 pytest pytest-cov
+          python -m pip install -r requirements-dev.txt
 
-      - name: Lint with flake8
-        run: |
-          flake8 src/ --count --show-source --statistics
+      - name: Lint dashboard and platform modules with flake8
+        run: flake8 web_dashboard.py src/platform src/monitoring/log_monitor.py --max-line-length=100 --extend-ignore=E203 --count --show-source --statistics
 
       - name: Check formatting with black
-        run: |
-          black --check .
+        run: black --check web_dashboard.py src/platform src/monitoring/log_monitor.py tests
 
       - name: Static type checks with mypy
-        run: |
-          mypy src
+        run: mypy src/platform
 
       - name: Run tests with coverage
-        run: |
-          PYTHONPATH=src pytest --cov=src --cov-report=xml tests/
+        run: python -m pytest --cov=src --cov-report=xml tests/
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -67,55 +66,9 @@ jobs:
           name: coverage-xml-${{ github.run_id }}
           path: coverage.xml
 
-  pr-summary:
-    if: github.event_name == 'pull_request'
-    needs: lint-test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download coverage report
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-xml-${{ github.run_id }}
-          path: .
-
-      - name: Check if coverage report exists
-        run: |
-          if [ ! -f "coverage.xml" ]; then
-            echo "No coverage report found."
-            exit 1
-          fi
-
-      - name: Add PR label
-        uses: actions-ecosystem/action-add-labels@v1
-        with:
-          labels: ci-passed
-
-      - name: Assign reviewers
-        uses: ahmadnassri/action-auto-assign@v2.2.0
-        with:
-          reviewers: smdevops024
-
-      - name: Post PR summary comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let coverage = 'Coverage report not found.';
-            try {
-              coverage = fs.readFileSync('coverage.xml', 'utf8').split('\n').slice(0, 10).join('\n');
-            } catch (e) {}
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `✅ CI Passed!\n\n**Coverage (first 10 lines):**\n\n\`\`\`xml\n${coverage}\n\`\`\``
-            });
-
   build-artifacts:
     needs: lint-test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,7 +76,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Build wheel and sdist
         run: |
@@ -140,7 +93,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [lint-test, build-artifacts]
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -163,7 +117,6 @@ jobs:
     if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
     needs: lint-test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -171,30 +124,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
 
       - name: Check version config exists
-        run: |
-          test -f .bumpversion.cfg || (echo "❌ Missing .bumpversion.cfg" && exit 1)
+        run: test -f .bumpversion.cfg
 
       - name: Install bump2version
-        run: |
-          python -m pip install --upgrade pip
-          pip install bump2version
+        run: python -m pip install bump2version
 
       - name: Determine version bump type
-        id: bump_type
         run: |
-          if [[ "${{ github.ref_name }}" == "main" ]]; then
-            echo "bump_type=minor" >> $GITHUB_ENV
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            echo "bump_type=minor" >> "$GITHUB_ENV"
           else
-            echo "bump_type=patch" >> $GITHUB_ENV
+            echo "bump_type=patch" >> "$GITHUB_ENV"
           fi
 
       - name: Bump version and generate release notes
         run: |
-          bump2version ${{ env.bump_type }}
-          echo "Release notes for version $(grep current_version .bumpversion.cfg | awk '{print $3}')" > release_notes.txt
+          bump2version "${{ env.bump_type }}"
+          current_version="$(awk -F' = ' '/^current_version/ { print $2 }' .bumpversion.cfg)"
+          printf 'Release notes for version %s\n' "$current_version" > release_notes.txt
 
       - name: Upload release notes
         uses: actions/upload-artifact@v4

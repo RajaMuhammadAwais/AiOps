@@ -1,79 +1,60 @@
 # Quick start
 
-This service is an integration-backed operations dashboard. It does not create sample telemetry, fabricate incidents, invent model responses, or execute local remediation actions without an explicitly configured external service.
+AiOps is an integration-backed operations dashboard. It does not create sample telemetry, fabricate incidents, invent model responses, or execute local remediation actions. Without configured upstreams, the dashboard can be opened locally, while readiness and data-dependent API routes correctly report that integrations are unavailable.
 
-## Install
+## Run locally
+
+Requirements: Python 3.12 or newer in the supported 3.x range, Bash, and package-index access for the first dependency install.
 
 ```bash
 git clone https://github.com/RajaMuhammadAwais/AiOps.git
 cd AiOps
+cp .env.example .env
+```
+
+Edit `.env` and supply the required identity, logging, network-bind, port, TLS, and bounded-limit values described in the [Configuration section](README.md#configuration). For local-only access, set `AIOPS_HOST` to a loopback address. Leave optional upstream values empty unless you have real systems and approved values to provide.
+
+Then run:
+
+```bash
+./scripts/run-local.sh
+```
+
+The launcher creates `.venv` if needed, installs only the dashboard and dotenv-loader dependencies from `requirements-local.txt`, loads `.env` without overriding values already exported in the process environment, and starts the dashboard. It does not set configuration defaults. Do not expose the development server to a public or untrusted network.
+
+## Verify local behavior
+
+Open the HTTP address printed by Flask using the host and port you configured. You can also request `/health/live` and `/health/ready` from a second terminal; substitute the actual `AIOPS_HOST` and `AIOPS_PORT` values from your `.env` rather than assuming a port or bind address.
+
+A 503 from readiness is correct when required real integrations are absent or unreachable. The liveness endpoint only reports that the process is serving HTTP; it does not establish upstream health. No demo records are generated to make the dashboard look populated.
+
+## Run tests and checks
+
+```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-## Configure deployment inputs
-
-Set the required identity and bind values before importing or starting the service:
-
-```bash
-export AIOPS_ENV="${AIOPS_ENV:?set deployment environment}"
-export AIOPS_SERVICE_NAME="${AIOPS_SERVICE_NAME:?set service identity}"
-export AIOPS_VERSION="${AIOPS_VERSION:?set immutable build identifier}"
-export AIOPS_HOST="${AIOPS_HOST:?set bind address}"
-export AIOPS_PORT="${AIOPS_PORT:?set service port}"
-export AIOPS_LOG_LEVEL="${AIOPS_LOG_LEVEL:?set log level}"
-export AIOPS_VERIFY_TLS="${AIOPS_VERIFY_TLS:?set TLS policy}"
-export AIOPS_PROMETHEUS_TIMEOUT_SECONDS="${AIOPS_PROMETHEUS_TIMEOUT_SECONDS:?set upstream timeout}"
-export AIOPS_MAX_QUERY_LENGTH="${AIOPS_MAX_QUERY_LENGTH:?set query limit}"
-export AIOPS_RATE_LIMIT_PER_MINUTE="${AIOPS_RATE_LIMIT_PER_MINUTE:?set rate limit}"
-export AIOPS_AUDIT_LOG_MAX_ENTRIES="${AIOPS_AUDIT_LOG_MAX_ENTRIES:?set audit capacity}"
-export AIOPS_EVENT_STORE_MAX_ENTRIES="${AIOPS_EVENT_STORE_MAX_ENTRIES:?set event capacity}"
-export AIOPS_SLO_TARGET="${AIOPS_SLO_TARGET:?set SLO target}"
-export AIOPS_SLO_WINDOW_MINUTES="${AIOPS_SLO_WINDOW_MINUTES:?set SLO window}"
-export AIOPS_REFRESH_SECONDS="${AIOPS_REFRESH_SECONDS:?set refresh interval}"
-```
-
-Configure at least one real telemetry or incident source. Prometheus is the normal metrics source; Alertmanager is the normal alert source:
-
-```bash
-export AIOPS_PROMETHEUS_URL="${AIOPS_PROMETHEUS_URL:?set the real Prometheus endpoint}"
-export AIOPS_ALERTMANAGER_URL="${AIOPS_ALERTMANAGER_URL:-}"
-export AIOPS_VERIFY_TLS=true
-```
-
-For authenticated deployments, provide a secret through the process environment or secret manager. Do not commit it:
-
-```bash
-export AIOPS_API_KEY='<secret-managed-value>'
-```
-
-Optional integrations are configured only when the corresponding real service exists: `AIOPS_INCIDENTS_URL`, `AIOPS_LOGS_URL`, `AIOPS_ACTIONS_URL`, `AIOPS_INSIGHTS_URL`, `AIOPS_THRESHOLDS_URL`, `AIOPS_LLM_URL`, `AIOPS_LLM_API_KEY`, and `AIOPS_LLM_MODEL`.
-
-## Validate configuration and start
-
-```bash
-python -c 'from src.platform.config import Settings; Settings.from_env(); print("configuration valid")'
-python web_dashboard.py
-```
-
-The liveness endpoint is `GET /health/live`. The readiness endpoint is `GET /health/ready`; it returns an unavailable response until the configured upstream integration can be reached. This prevents the service from reporting readiness without real data sources.
-
-## Verify the deployment
-
-```bash
-curl -fsS http://127.0.0.1:${AIOPS_PORT}/health/live
-curl -i http://127.0.0.1:${AIOPS_PORT}/health/ready
-```
-
-Use the dashboard only after readiness succeeds. Query parameters, incident content, and model output are rendered as text, not HTML. Every request receives a correlation identifier for log tracing.
-
-## Run repository checks
-
-```bash
+python -m pip install -r requirements-dev.txt
 python -m compileall -q web_dashboard.py src tests
-python -m unittest discover -s tests -p 'test_operational_foundations.py' -v
+python -m unittest discover -s tests -v
 ```
 
-Operational deployment, security boundaries, integration response contracts, and rollout rules are documented in [OPERATIONS.md](OPERATIONS.md) and [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+`requirements-dev.txt` installs the dashboard runtime plus test and lint tools. `requirements.txt` remains the broader dependency set for the repository's optional analytics and integration modules.
+
+## Production boundary
+
+`./scripts/run-local.sh` uses Flask's development server and is for local development only. Flask's official deployment guidance requires a dedicated WSGI server or hosting platform outside local development. The repository includes Gunicorn in its full dependency set; a deployment can run the WSGI application with an approved server, for example:
+
+```bash
+gunicorn --bind "${AIOPS_HOST}:${AIOPS_PORT}" web_dashboard:app
+```
+
+Production also needs real, reachable integrations, deployment-managed secrets, TLS, an identity-aware ingress, shared rate limiting when running multiple workers, and durable audit/log handling. Do not treat a successful local liveness check or the in-process audit view as production readiness.
+
+## Research basis
+
+The local launcher keeps model behavior and operational data behind explicit integrations. This follows the repository's fail-closed integration contract; it does not establish that a configured model is safe. NIST describes its Generative AI Profile as a voluntary resource for incorporating trustworthiness into AI system design, development, use, and evaluation. OWASP's prompt-injection guidance describes residual risk and recommends constrained behavior, least privilege, human approval for high-risk actions, and adversarial testing. Flask distinguishes local development from production serving.
+
+- [NIST AI RMF Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence)
+- [OWASP LLM01:2025 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
+- [Flask deployment guidance](https://flask.palletsprojects.com/en/stable/deploying/)
+- [OPERATIONS.md](OPERATIONS.md) describes integration contracts and trust boundaries.

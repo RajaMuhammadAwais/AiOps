@@ -1,0 +1,4 @@
+# Runtime dependencies required by the dashboard and local dotenv-based launcher.
+Flask>=3.1.1,<4
+requests>=2.32.4,<3
+python-dotenv>=1.1.0,<2

@@ -2,12 +2,15 @@ import time
 import threading
 from typing import Callable
 
+
 class LogMonitor:
     """Monitors a log file in real time and triggers a callback on new lines."""
+
     def __init__(self, log_path: str, callback: Callable[[str], None]):
         self.log_path = log_path
         self.callback = callback
         self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
 
     def start(self):
         thread = threading.Thread(target=self._run, daemon=True)
@@ -17,10 +20,15 @@ class LogMonitor:
     def stop(self):
         self._stop_event.set()
 
+    def wait_until_ready(self, timeout: float | None = None) -> bool:
+        """Wait until the file is open and the initial seek has completed."""
+        return self._ready_event.wait(timeout)
+
     def _run(self):
         try:
-            with open(self.log_path, 'r') as f:
+            with open(self.log_path, "r") as f:
                 f.seek(0, 2)  # Move to end of file
+                self._ready_event.set()
                 while not self._stop_event.is_set():
                     line = f.readline()
                     if not line:
@@ -30,10 +38,12 @@ class LogMonitor:
         except Exception as e:
             print(f"LogMonitor error: {e}")
 
+
 def example_callback(line: str):
     if "ERROR" in line or "CRITICAL" in line:
         print(f"ALERT: {line.strip()}")  # Replace with integration to alerting system
     # else: process or forward log line as needed
+
 
 if __name__ == "__main__":
     log_file = "/var/log/syslog"  # Change as needed
