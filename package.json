@@ -19,7 +19,7 @@
     "commander": "^14.0.0",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
-    "drizzle-orm": "^0.44.2",
+    "drizzle-orm": "^0.45.4",
     "drizzle-zod": "^0.8.2",
     "express": "^5.1.0",
     "inquirer": "^12.6.3",
