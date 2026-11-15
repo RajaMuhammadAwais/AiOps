@@ -180,15 +180,18 @@ class SystemMonitor:
         return metrics
     
     def _collect_network_metrics(self, timestamp: datetime) -> List[Dict]:
-        """Collect network metrics"""
+        """Collect available network metrics independently by source."""
         metrics = []
-        
+
         try:
             net_io = psutil.net_io_counters()
-            net_connections = len(psutil.net_connections())
-            
-            if net_io:
-                metrics.extend([
+        except Exception as exc:
+            logger.error("Error collecting network I/O counters: %s", exc)
+            net_io = None
+
+        if net_io:
+            metrics.extend(
+                [
                     {
                         'name': 'network_bytes_sent_total',
                         'value': net_io.bytes_sent,
@@ -221,8 +224,14 @@ class SystemMonitor:
                         'source': 'psutil',
                         'labels': {'type': 'network', 'direction': 'received'}
                     }
-                ])
-            
+                ]
+            )
+
+        try:
+            net_connections = len(psutil.net_connections())
+        except Exception as exc:
+            logger.error("Error collecting network connections: %s", exc)
+        else:
             metrics.append({
                 'name': 'network_connections_total',
                 'value': net_connections,
@@ -231,10 +240,7 @@ class SystemMonitor:
                 'source': 'psutil',
                 'labels': {'type': 'network'}
             })
-            
-        except Exception as e:
-            logger.error(f"Error collecting network metrics: {e}")
-        
+
         return metrics
     
     def _collect_process_metrics(self, timestamp: datetime) -> List[Dict]:
