@@ -168,7 +168,9 @@ def _build_context() -> dict[str, Any]:
 def before_request() -> None:
     request_id = request.headers.get("X-Request-ID")
     if isinstance(request_id, str):
-        request_id = request_id.replace("\r", "").replace("\n", "")
+        request_id = "".join(
+            ch for ch in request_id if ch.isalnum() or ch in ("-", "_")
+        )
     g.request_id = request_id or new_request_id()
     g.started_at = time.perf_counter()
     if request.path.startswith("/api") or request.path == "/metrics":
