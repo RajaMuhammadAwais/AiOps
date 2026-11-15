@@ -44,7 +44,7 @@ The dotted ingress path is a deployment option, not an application component. Fl
 
 ## 2. Request flow
 
-`web_dashboard.py` is the composition root: it loads `Settings`, builds the Flask app, creates the adapters and in-process registries, and registers routes. `Settings.from_env()` and app construction currently run at module import time. As the test matrix grows, move composition into a `create_app(settings)` factory and pass dependencies explicitly; Flask documents the factory pattern as a way to create app instances with different settings for testing. [9]
+`web_dashboard.py` is the composition root. `create_app(settings, dependencies=...)` builds an independently configured Flask application, adapters, and in-process registries; tests can pass explicit settings and fake upstream clients without changing process-wide environment variables. The production `web_dashboard:app` WSGI callable remains available and loads deployment settings when first used, while importing the module itself does not require deployment configuration. Flask documents the factory pattern as a way to create app instances with different settings for testing. [9]
 
 Request processing is currently:
 

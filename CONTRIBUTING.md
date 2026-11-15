@@ -22,7 +22,7 @@ python -m compileall -q web_dashboard.py src tests
 black --check web_dashboard.py src/platform src/monitoring/log_monitor.py tests
 flake8 web_dashboard.py src/platform src/monitoring/log_monitor.py --max-line-length=100 --extend-ignore=E203
 mypy src/platform
-python -m pytest --cov=src --cov-report=term-missing tests/
+python -m pytest --cov=web_dashboard --cov=src/platform --cov-report=term-missing tests/
 git diff --check
 ```
 
