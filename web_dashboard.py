@@ -166,7 +166,10 @@ def _build_context() -> dict[str, Any]:
 
 @app.before_request
 def before_request() -> None:
-    g.request_id = request.headers.get("X-Request-ID") or new_request_id()
+    request_id = request.headers.get("X-Request-ID")
+    if isinstance(request_id, str):
+        request_id = request_id.replace("\r", "").replace("\n", "")
+    g.request_id = request_id or new_request_id()
     g.started_at = time.perf_counter()
     if request.path.startswith("/api") or request.path == "/metrics":
         if not rate_limiter.allow(request_key(request)):
