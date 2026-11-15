@@ -27,7 +27,7 @@ jobs:
           echo "${{ steps.get_issues.outputs.data }}" | jq -r '.[] | "- [\(.title)](\(.html_url))"' >> ISSUES.md
 
       - name: Upload issue report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: open-issues-${{ github.run_id }}
           path: ISSUES.md
