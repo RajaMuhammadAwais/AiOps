@@ -1,12 +1,13 @@
 """
 Alert correlation and noise reduction using ML techniques
 """
+import json
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import DBSCAN
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Tuple, Set
 import logging
 import re
@@ -77,30 +78,51 @@ class AlertCorrelator:
         """Group alerts by time proximity"""
         if not alerts:
             return []
-            
-        # Sort alerts by timestamp
-        sorted_alerts = sorted(alerts, key=lambda x: x.get('timestamp', datetime.now()))
-        
-        groups = []
-        current_group = [sorted_alerts[0]]
-        
-        for alert in sorted_alerts[1:]:
-            last_alert_time = current_group[-1].get('timestamp', datetime.now())
-            current_alert_time = alert.get('timestamp', datetime.now())
-            
-            if isinstance(last_alert_time, str):
-                last_alert_time = datetime.fromisoformat(last_alert_time.replace('Z', '+00:00'))
-            if isinstance(current_alert_time, str):
-                current_alert_time = datetime.fromisoformat(current_alert_time.replace('Z', '+00:00'))
-            
-            if current_alert_time - last_alert_time <= self.time_window:
-                current_group.append(alert)
+
+        timestamped_alerts = []
+        invalid_timestamp_alerts = []
+        for alert in alerts:
+            raw_timestamp = alert.get('timestamp')
+            if raw_timestamp is None:
+                timestamp = datetime.now(timezone.utc)
             else:
-                groups.append(current_group)
-                current_group = [alert]
-        
-        groups.append(current_group)
-        return [group for group in groups if group]  # Filter empty groups
+                timestamp = self._normalize_timestamp(raw_timestamp)
+            if timestamp is None:
+                invalid_timestamp_alerts.append(alert)
+            else:
+                timestamped_alerts.append((timestamp, alert))
+
+        timestamped_alerts.sort(key=lambda item: item[0])
+        groups = []
+
+        if timestamped_alerts:
+            current_group = [timestamped_alerts[0][1]]
+            last_timestamp = timestamped_alerts[0][0]
+            for current_timestamp, alert in timestamped_alerts[1:]:
+                if current_timestamp - last_timestamp <= self.time_window:
+                    current_group.append(alert)
+                else:
+                    groups.append(current_group)
+                    current_group = [alert]
+                last_timestamp = current_timestamp
+            groups.append(current_group)
+
+        groups.extend([[alert] for alert in invalid_timestamp_alerts])
+        return groups
+
+    @staticmethod
+    def _normalize_timestamp(timestamp: object) -> datetime | None:
+        """Normalize supported timestamps to aware UTC datetimes."""
+        if isinstance(timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except ValueError:
+                return None
+        if not isinstance(timestamp, datetime):
+            return None
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.astimezone(timezone.utc)
     
     def _find_similar_alerts(self, alerts: List[Dict]) -> List[List[Dict]]:
         """Find similar alerts using text similarity and other features"""
@@ -193,26 +215,32 @@ class AlertCorrelator:
             'common_labels': {},
             'message_pattern': None
         }
-        
+
+        labels_per_alert = []
         # Collect common attributes
         for alert in alert_group:
+            labels = alert.get('labels', {})
+            if not isinstance(labels, dict):
+                labels = {}
+            labels_per_alert.append(labels)
+
             # Services
-            if 'service' in alert.get('labels', {}):
-                pattern['services'].add(alert['labels']['service'])
-            
-            # Labels that appear in all alerts
-            for key, value in alert.get('labels', {}).items():
-                if key not in pattern['common_labels']:
-                    pattern['common_labels'][key] = set()
-                pattern['common_labels'][key].add(value)
-        
-        # Keep only labels that appear in all alerts
-        all_alert_count = len(alert_group)
-        pattern['common_labels'] = {
-            k: v for k, v in pattern['common_labels'].items()
-            if len(v) == 1  # Same value across all alerts
-        }
-        
+            if 'service' in labels:
+                pattern['services'].add(labels['service'])
+
+        if labels_per_alert:
+            for key, value in labels_per_alert[0].items():
+                if not all(
+                    key in labels and labels[key] == value
+                    for labels in labels_per_alert[1:]
+                ):
+                    continue
+                try:
+                    json.dumps(value, allow_nan=False)
+                except (TypeError, ValueError):
+                    continue
+                pattern['common_labels'][key] = value
+
         # Extract message pattern using regex
         messages = [alert.get('message', '') for alert in alert_group]
         pattern['message_pattern'] = self._find_common_message_pattern(messages)
