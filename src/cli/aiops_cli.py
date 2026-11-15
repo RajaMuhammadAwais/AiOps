@@ -72,10 +72,17 @@ class AIOpsController:
                     self.alerts.extend(new_alerts)
                     
                     # Correlate alerts
-                    correlation_result = self.alert_correlator.correlate_alerts(self.alerts[-50:])  # Last 50 alerts
+                    correlation_input = [
+                        alert.model_dump(mode="json")
+                        for alert in self.alerts[-50:]
+                    ]
+                    correlation_result = self.alert_correlator.correlate_alerts(
+                        correlation_input
+                    )  # Last 50 alerts
                     
                     # Create incidents from unique alerts
-                    for alert in correlation_result['unique_alerts']:
+                    for alert_data in correlation_result['unique_alerts']:
+                        alert = Alert.model_validate(alert_data)
                         incident = await self._create_incident_from_alert(alert, anomalies)
                         self.incidents.append(incident)
                         console.print(f"[red]🚨 New incident created: {incident.title}[/red]")
