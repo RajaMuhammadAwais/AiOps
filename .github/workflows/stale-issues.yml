@@ -11,7 +11,7 @@ jobs:
   generate-doc:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fetch Issues and Generate Doc
         uses: octokit/request-action@v2
