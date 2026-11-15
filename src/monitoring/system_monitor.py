@@ -255,7 +255,11 @@ class SystemMonitor:
             # Sort by CPU usage
             top_cpu_processes = sorted(processes, key=lambda x: x.get('cpu_percent', 0), reverse=True)[:5]
             # Sort by memory usage
-            top_mem_processes = sorted(processes, key=lambda x: x.get('memory_percent', 0), reverse=True)[:5]
+            top_mem_processes = sorted(
+                processes,
+                key=lambda process: process.get('memory_percent') or 0,
+                reverse=True,
+            )[:5]
             
             metrics.append({
                 'name': 'process_count_total',
@@ -275,6 +279,20 @@ class SystemMonitor:
                     'unit': 'percent',
                     'source': 'psutil',
                     'labels': {'type': 'process', 'process_name': proc.get('name', 'unknown'), 'rank': str(i+1)}
+                })
+
+            for i, proc in enumerate(top_mem_processes):
+                metrics.append({
+                    'name': f'top_memory_process_{i+1}_usage',
+                    'value': proc.get('memory_percent') or 0,
+                    'timestamp': timestamp,
+                    'unit': 'percent',
+                    'source': 'psutil',
+                    'labels': {
+                        'type': 'process',
+                        'process_name': proc.get('name', 'unknown'),
+                        'rank': str(i+1),
+                    }
                 })
             
         except Exception as e:
