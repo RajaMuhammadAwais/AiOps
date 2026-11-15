@@ -11,7 +11,7 @@
   "description": "",
   "dependencies": {
     "@types/inquirer": "^9.0.8",
-    "@types/node": "^24.0.3",
+    "@types/node": "^26.6.6",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
     "axios": "^1.10.0",
