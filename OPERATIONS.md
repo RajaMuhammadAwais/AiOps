@@ -2,7 +2,7 @@
 
 ## Purpose and trust boundary
 
-The service is a thin operational control plane. It is trusted to authenticate requests when an API key is configured, validate and bound request bodies, correlate requests, expose service metrics, and delegate external calls through configured adapters. It is not trusted to invent telemetry, decide that a dependency is healthy without checking it, execute autonomous remediation, or retain durable audit history in process memory.
+The service is a thin operational control plane. It is trusted to authenticate API keys or configured gateway assertions, enforce route scopes, validate and bound request bodies, correlate requests, expose service metrics, and delegate external calls through configured adapters. It is not trusted to invent telemetry, decide that a dependency is healthy without checking it, execute autonomous remediation, or retain durable audit history in process memory.
 
 > A missing or unavailable source is an operational failure, not a reason to return a plausible-looking value.
 
@@ -35,9 +35,9 @@ The `/metrics` endpoint exposes request counters plus duration sum and retained 
 
 ## Security controls
 
-`/api/*` and `/metrics` accept `X-AiOps-API-Key` or a bearer token when `AIOPS_API_KEY` is configured. Outside production the key can be omitted, leaving these routes unauthenticated; production requires a key of at least 24 characters. Root and health routes are public. `AIOPS_ALLOWED_ORIGINS` is optional; when configured it is an origin allowlist, not a complete preflight or browser-authentication solution. The service applies a process-local sliding-window limiter, bounds the assistant query, redacts common secret patterns in selected audit details, and returns a request identifier on every response.
+`/api/*` and `/metrics` accept `X-AiOps-API-Key` or a bearer token when `AIOPS_API_KEY` is configured; this credential grants `aiops:read` only. A trusted gateway may instead authenticate a same-origin browser session and forward the server-side `AIOPS_GATEWAY_TOKEN` with `X-AiOps-Principal` and space-separated `X-AiOps-Scopes` claims. The gateway must remove client-supplied copies of those headers and set them only from verified identity/session data. `aiops:alerts:silence` authorizes only alert suppression; `aiops:thresholds:write` authorizes only threshold updates. Outside production, no configured credentials permit anonymous reads only; production still requires an API key of at least 24 characters. `/health/live` and `/health/ready` are public; the root dashboard shell is public unless the gateway protects it. Gateway-authenticated unsafe methods require an exact `Origin` in `AIOPS_ALLOWED_ORIGINS` as CSRF protection. CORS is not authentication. The service also applies a process-local sliding-window limiter, bounds the assistant query, redacts common secret patterns in selected audit details, and returns a request identifier on every response.
 
-The browser dashboard assigns source values with `textContent` and does not interpret source payloads as HTML. Its JavaScript does not send the shared API key; a protected dashboard therefore needs a reviewed same-origin session or gateway that authenticates browser requests. Never embed the service key in client-side code. The assistant policy metadata says autonomous actions are disabled, but the API does not itself create an approval record or role-based authorization check. The model adapter sends the assembled context and user question; local environment variables, request headers, and audit records are not part of that context.
+The browser dashboard assigns source values with `textContent`, does not interpret source payloads as HTML, and uses same-origin credentials without sending a shared API key. Never embed the service key or gateway token in client-side code. The app enforces explicit scopes and records the authenticated principal for its two write routes, but does not itself create a separate approval record. The model adapter sends the assembled context and user question; local environment variables, request headers, and audit records are not part of that context.
 
 The in-process audit log is bounded and is not a durable compliance store. Deployments must ship structured service logs and audit events to an access-controlled retention system before enabling sensitive write operations in production.
 
@@ -45,7 +45,7 @@ The in-process audit log is bounded and is not a durable compliance store. Deplo
 
 Secrets must be supplied by the deployment secret manager. The repository must not contain live credentials, endpoint-specific bearer tokens, or source fixtures. TLS verification remains enabled by default; disabling it requires an explicit deployment decision and should be limited to controlled test environments.
 
-The service should run behind an identity-aware gateway, with network policy restricting outbound connections to configured source systems and the model gateway. The gateway should enforce organization-level identity, authorization scopes, request body limits, browser-session behavior, and durable audit retention. Readiness checks only Prometheus and Alertmanager; separately smoke-test each optional integration that the release intends to use.
+The service should run behind an identity-aware gateway, with network policy restricting outbound connections to configured source systems and the model gateway. Store `AIOPS_GATEWAY_TOKEN` only in the gateway and app secret manager; restrict direct app access, configure exact browser origins, and have the gateway overwrite the identity/scope headers after session authentication. The gateway remains responsible for organization identity, request limits, approval records, and durable audit retention. Readiness checks only Prometheus and Alertmanager; separately smoke-test each optional integration that the release intends to use.
 
 ## Migration sequence
 

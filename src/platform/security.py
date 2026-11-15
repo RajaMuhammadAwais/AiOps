@@ -37,8 +37,31 @@ class AuthenticationError(PermissionError):
     """Raised when an API request is not authorized."""
 
 
+class AuthorizationError(PermissionError):
+    """Raised when an authenticated principal lacks a required scope."""
+
+
+class CsrfError(AuthorizationError):
+    """Raised when a gateway-authenticated unsafe request is cross-origin."""
+
+
 class RateLimitExceeded(PermissionError):
     """Raised when a client exceeds the configured request budget."""
+
+
+READ_SCOPE = "aiops:read"
+ALERT_SILENCE_SCOPE = "aiops:alerts:silence"
+THRESHOLDS_WRITE_SCOPE = "aiops:thresholds:write"
+ALLOWED_SCOPES = frozenset({READ_SCOPE, ALERT_SILENCE_SCOPE, THRESHOLDS_WRITE_SCOPE})
+
+
+@dataclass(frozen=True)
+class Principal:
+    """Authenticated identity and its explicitly granted AiOps scopes."""
+
+    subject: str
+    scopes: frozenset[str]
+    auth_method: str
 
 
 def redact(value: Any) -> Any:
@@ -60,17 +83,52 @@ def request_key(request: Request) -> str:
     return request.remote_addr or "unknown"
 
 
-def authorize(request: Request, settings: Settings) -> None:
-    """Enforce the configured API key using constant-time comparison."""
-    if not settings.auth_enabled:
-        return
+def authorize(request: Request, settings: Settings) -> Principal:
+    """Authenticate a service key or a trusted gateway's user assertion."""
+    gateway_token = request.headers.get("X-AiOps-Gateway-Token")
+    if gateway_token is not None:
+        if not settings.gateway_token or not hmac.compare_digest(
+            gateway_token, settings.gateway_token
+        ):
+            raise AuthenticationError("Authentication required")
+        subject = request.headers.get("X-AiOps-Principal", "").strip()
+        raw_scopes = request.headers.get("X-AiOps-Scopes", "")
+        scopes = frozenset(raw_scopes.split())
+        if (
+            not subject
+            or len(subject) > 128
+            or any(ord(char) < 32 for char in subject)
+            or not scopes
+            or not scopes.issubset(ALLOWED_SCOPES)
+        ):
+            raise AuthenticationError("Invalid trusted gateway identity")
+        return Principal(subject, scopes, "gateway")
+
     supplied = request.headers.get("X-AiOps-API-Key", "")
     if not supplied:
         authorization = request.headers.get("Authorization", "")
         if authorization.lower().startswith("bearer "):
             supplied = authorization[7:].strip()
-    if not supplied or not hmac.compare_digest(supplied, settings.api_key or ""):
+    if supplied:
+        if not settings.api_key or not hmac.compare_digest(supplied, settings.api_key):
+            raise AuthenticationError("Authentication required")
+        return Principal("service-api-key", frozenset({READ_SCOPE}), "api_key")
+    if settings.api_key or settings.gateway_token or settings.production:
         raise AuthenticationError("Authentication required")
+    return Principal("anonymous", frozenset({READ_SCOPE}), "development")
+
+
+def require_scope(principal: Principal, scope: str) -> None:
+    """Require one exact scope; no write scope implies another permission."""
+    if scope not in principal.scopes:
+        raise AuthorizationError("Insufficient permissions")
+
+
+def require_same_origin(request: Request, settings: Settings) -> None:
+    """Require a configured Origin on gateway-authenticated unsafe requests."""
+    origin = request.headers.get("Origin")
+    if not origin or origin not in settings.allowed_origins:
+        raise CsrfError("A same-origin request is required")
 
 
 class SlidingWindowRateLimiter:
