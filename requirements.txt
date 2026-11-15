@@ -24,7 +24,7 @@ tqdm
 networkx
 paho-mqtt
 pandas
-pre-commit>=4.0.1
+pre-commit>=4.7.0
 prophet
 prometheus-client
 psutil
