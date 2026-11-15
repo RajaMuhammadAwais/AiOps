@@ -1,0 +1,8 @@
+# Default reviewers for all repository changes.
+* @RajaMuhammadAwais
+
+# Security-sensitive code and delivery controls.
+/.github/ @RajaMuhammadAwais
+/SECURITY.md @RajaMuhammadAwais
+/src/platform/security.py @RajaMuhammadAwais
+/src/platform/config.py @RajaMuhammadAwais

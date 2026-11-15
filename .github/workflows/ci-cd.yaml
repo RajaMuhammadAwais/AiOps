@@ -2,75 +2,78 @@ name: AIOps CI/CD
 
 on:
   push:
-    branches: [main, master]
-    tags:
-      - "v*.*.*"
+    branches: [main]
+    tags: ["v*.*.*"]
   pull_request:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
-# Default-deny write access. Jobs must request any additional permission explicitly.
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-test:
+    name: Lint, type-check, and test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.12"]
 
     steps:
-      - name: Checkout code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('requirements-local.txt', 'requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-py${{ matrix.python-version }}-pip-
-
-      - name: Check required files
-        run: |
-          test -f requirements-local.txt
-          test -f requirements-dev.txt
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
 
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
-      - name: Lint dashboard and platform modules with flake8
-        run: flake8 web_dashboard.py src/platform src/monitoring/log_monitor.py --max-line-length=100 --extend-ignore=E203 --count --show-source --statistics
+      - name: Compile Python sources
+        run: python -m compileall -q web_dashboard.py src tests
 
-      - name: Check formatting with black
+      - name: Check formatting
         run: black --check web_dashboard.py src/platform src/monitoring/log_monitor.py tests
 
-      - name: Static type checks with mypy
+      - name: Run flake8
+        run: flake8 web_dashboard.py src/platform src/monitoring/log_monitor.py --max-line-length=100 --extend-ignore=E203 --count --show-source --statistics
+
+      - name: Run mypy
         run: mypy src/platform
 
       - name: Run tests with coverage
-        run: python -m pytest --cov=src --cov-report=xml tests/
+        run: python -m pytest --cov=src --cov-report=term-missing --cov-report=xml tests/
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml-${{ github.run_id }}
+          name: coverage-python-${{ matrix.python-version }}-${{ github.run_id }}
           path: coverage.xml
+          if-no-files-found: ignore
+
+      - name: Check whitespace errors
+        run: git diff --check
 
   build-artifacts:
+    name: Build Python artifacts
     needs: lint-test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout code
+      - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -78,76 +81,35 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build wheel and sdist
+      - name: Build wheel and source distribution
         run: |
           python -m pip install --upgrade pip build
           python -m build
 
-      - name: Upload dist artifacts
+      - name: Upload distribution artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: python-dist-${{ github.run_id }}
           path: dist/*
 
   release:
+    name: Publish tagged GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [lint-test, build-artifacts]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download dist artifacts
+      - name: Download distribution artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: python-dist-${{ github.run_id }}
           path: dist
 
-      - name: Create GitHub Release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/**
+          generate_release_notes: true
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  versioning:
-    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
-    needs: lint-test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Check version config exists
-        run: test -f .bumpversion.cfg
-
-      - name: Install bump2version
-        run: python -m pip install bump2version
-
-      - name: Determine version bump type
-        run: |
-          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-            echo "bump_type=minor" >> "$GITHUB_ENV"
-          else
-            echo "bump_type=patch" >> "$GITHUB_ENV"
-          fi
-
-      - name: Bump version and generate release notes
-        run: |
-          bump2version "${{ env.bump_type }}"
-          current_version="$(awk -F' = ' '/^current_version/ { print $2 }' .bumpversion.cfg)"
-          printf 'Release notes for version %s\n' "$current_version" > release_notes.txt
-
-      - name: Upload release notes
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes-${{ github.run_id }}
-          path: release_notes.txt
