@@ -433,7 +433,8 @@ def api_suppress_alert():
     comment = payload.get("comment")
     if not isinstance(alert_id, str) or not alert_id.strip():
         raise RequestValidationError("alert_id must be a non-empty string")
-    if not isinstance(duration, int) or not 1 <= duration <= 10080:
+    is_integer_duration = isinstance(duration, int) and not isinstance(duration, bool)
+    if not is_integer_duration or not 1 <= duration <= 10080:
         raise RequestValidationError(
             "duration must be an integer between 1 and 10080 minutes"
         )

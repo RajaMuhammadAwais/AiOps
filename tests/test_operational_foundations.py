@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 CONFIG_ENV = {
     "AIOPS_ENV": "test",
@@ -74,6 +75,59 @@ class OperationalFoundationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.get_json()["error"]["code"], "integration_unavailable"
+        )
+
+    def test_suppress_alert_rejects_boolean_and_out_of_range_durations(self):
+        with patch.object(
+            self.module, "_refresh_alerts", return_value=[{"id": "alert-1"}]
+        ) as refresh_alerts, patch.object(
+            self.module.alertmanager,
+            "create_silence",
+            return_value={"silence_id": "silence-1", "ends_at": "test"},
+        ) as create_silence:
+            for duration in (True, False, 0, 10081):
+                with self.subTest(duration=duration):
+                    response = self.client.post(
+                        "/api/suppress-alert",
+                        json={
+                            "alert_id": "alert-1",
+                            "duration": duration,
+                            "comment": "test suppression",
+                        },
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "invalid_request"
+                    )
+
+            refresh_alerts.assert_not_called()
+            create_silence.assert_not_called()
+
+    def test_suppress_alert_accepts_valid_integer_duration(self):
+        with patch.object(
+            self.module, "_refresh_alerts", return_value=[{"id": "alert-1"}]
+        ) as refresh_alerts, patch.object(
+            self.module.alertmanager,
+            "create_silence",
+            return_value={"silence_id": "silence-1", "ends_at": "test"},
+        ) as create_silence:
+            response = self.client.post(
+                "/api/suppress-alert",
+                json={
+                    "alert_id": "alert-1",
+                    "duration": 5,
+                    "comment": "test suppression",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "suppressed")
+        refresh_alerts.assert_called_once_with()
+        create_silence.assert_called_once_with(
+            [{"name": "fingerprint", "value": "alert-1", "isRegex": False}],
+            5,
+            "test suppression",
+            "aiops-test",
         )
 
     def test_template_does_not_render_source_data_as_html(self):
