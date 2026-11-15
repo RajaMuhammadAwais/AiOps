@@ -12,6 +12,10 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 
+class LLMRequestError(RuntimeError):
+    """Raised when the configured model cannot return an analysis response."""
+
+
 class LLMAssistant:
     """AI assistant for incident management and analysis"""
     
@@ -80,20 +84,32 @@ class LLMAssistant:
                 result = json.loads(response)
                 return result
             except json.JSONDecodeError:
-                # Fallback if JSON parsing fails
+                # Preserve model text for diagnosis, but never infer a
+                # resolution time from an unstructured response.
                 return {
                     'description': f"Incident: {alert.get('name', 'Unknown')}",
                     'explanation': response,
                     'root_cause': 'Analysis provided in explanation',
-                    'predicted_time': 30
+                    'predicted_time': None,
+                    'analysis_status': 'invalid_response'
                 }
+        except LLMRequestError as e:
+            logger.error(f"LLM incident analysis unavailable: {e}")
+            return {
+                'description': f"Alert: {alert.get('name', 'Unknown')}",
+                'explanation': f"AI analysis unavailable: {e}",
+                'root_cause': 'Unable to determine - analysis unavailable',
+                'predicted_time': None,
+                'analysis_status': 'unavailable'
+            }
         except Exception as e:
             logger.error(f"Error generating incident explanation: {e}")
             return {
                 'description': f"Alert: {alert.get('name', 'Unknown')}",
                 'explanation': f"Error generating AI analysis: {e}",
                 'root_cause': 'Unable to determine - analysis failed',
-                'predicted_time': None
+                'predicted_time': None,
+                'analysis_status': 'error'
             }
     
     async def chat_query(self, query: str, context: Dict) -> str:
@@ -287,7 +303,9 @@ class LLMAssistant:
         """Make request to OpenAI API"""
         try:
             if not self.client:
-                return "AI assistant unavailable - configure AIOPS_LLM_API_KEY and AIOPS_LLM_MODEL"
+                raise LLMRequestError(
+                    "configure AIOPS_LLM_API_KEY and AIOPS_LLM_MODEL"
+                )
                 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -300,11 +318,15 @@ class LLMAssistant:
             )
             
             content = response.choices[0].message.content
-            return content if content else "No response from AI"
+            if not content:
+                raise LLMRequestError("model returned an empty response")
+            return content
             
         except Exception as e:
+            if isinstance(e, LLMRequestError):
+                raise
             logger.error(f"OpenAI API request failed: {e}")
-            return f"AI request failed: {e}"
+            raise LLMRequestError(f"request failed: {e}") from e
     
     def is_available(self) -> bool:
         """Check if LLM assistant is available"""
