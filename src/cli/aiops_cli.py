@@ -6,6 +6,7 @@ import click
 import json
 import asyncio
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import Dict, List, Optional
 from rich.console import Console
 from rich.table import Table
@@ -19,11 +20,6 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from models.incident import Incident, Alert, IncidentSeverity, IncidentStatus, AlertSource
-from ml.anomaly_detector import AnomalyDetector
-from ml.alert_correlator import AlertCorrelator
-from monitoring.system_monitor import SystemMonitor
-from alerting.alert_manager import AlertManager
-from chatops.llm_assistant import LLMAssistant
 
 console = Console()
 
@@ -32,6 +28,12 @@ class AIOpsController:
     """Main controller for AIOps operations"""
     
     def __init__(self):
+        from ml.anomaly_detector import AnomalyDetector
+        from ml.alert_correlator import AlertCorrelator
+        from monitoring.system_monitor import SystemMonitor
+        from alerting.alert_manager import AlertManager
+        from chatops.llm_assistant import LLMAssistant
+
         self.anomaly_detector = AnomalyDetector()
         self.alert_correlator = AlertCorrelator()
         self.system_monitor = SystemMonitor()
@@ -52,47 +54,69 @@ class AIOpsController:
         
         console.print("[green]✓ AIOps system initialized successfully[/green]")
     
-    async def start_monitoring(self):
-        """Start real-time monitoring"""
+    async def start_monitoring(self, duration_minutes: int = 0):
+        """Monitor continuously, or stop after the requested number of minutes."""
+        if (
+            not isinstance(duration_minutes, int)
+            or isinstance(duration_minutes, bool)
+            or duration_minutes < 0
+        ):
+            raise ValueError("duration_minutes must be a non-negative integer")
+
+        deadline = (
+            monotonic() + duration_minutes * 60 if duration_minutes > 0 else None
+        )
         console.print("[yellow]Starting real-time monitoring...[/yellow]")
-        
+
         try:
             while True:
-                # Collect current metrics
-                current_metrics = await self.system_monitor.collect_metrics()
-                
-                # Detect anomalies
+                if deadline is None:
+                    current_metrics = await self.system_monitor.collect_metrics()
+                else:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        current_metrics = await asyncio.wait_for(
+                            self.system_monitor.collect_metrics(), timeout=remaining
+                        )
+                    except asyncio.TimeoutError:
+                        break
+
                 anomalies = self.anomaly_detector.detect_anomalies(current_metrics)
-                
                 if anomalies:
                     console.print(f"[red]⚠️  Detected {len(anomalies)} anomalies[/red]")
-                    
-                    # Convert anomalies to alerts
                     new_alerts = self._anomalies_to_alerts(anomalies)
                     self.alerts.extend(new_alerts)
-                    
-                    # Correlate alerts
                     correlation_input = [
-                        alert.model_dump(mode="json")
-                        for alert in self.alerts[-50:]
+                        alert.model_dump(mode="json") for alert in self.alerts[-50:]
                     ]
                     correlation_result = self.alert_correlator.correlate_alerts(
                         correlation_input
-                    )  # Last 50 alerts
-                    
-                    # Create incidents from unique alerts
-                    for alert_data in correlation_result['unique_alerts']:
+                    )
+                    for alert_data in correlation_result["unique_alerts"]:
                         alert = Alert.model_validate(alert_data)
-                        incident = await self._create_incident_from_alert(alert, anomalies)
+                        incident = await self._create_incident_from_alert(
+                            alert, anomalies
+                        )
                         self.incidents.append(incident)
-                        console.print(f"[red]🚨 New incident created: {incident.title}[/red]")
-                
-                # Sleep for monitoring interval
-                await asyncio.sleep(30)  # 30 seconds
-                
+                        console.print(
+                            f"[red]🚨 New incident created: {incident.title}[/red]"
+                        )
+
+                sleep_seconds = self.system_monitor.monitoring_interval
+                if deadline is not None:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        break
+                    sleep_seconds = min(sleep_seconds, remaining)
+                await asyncio.sleep(sleep_seconds)
         except KeyboardInterrupt:
             console.print("[yellow]Monitoring stopped by user[/yellow]")
-    
+
+        if deadline is not None and monotonic() >= deadline:
+            console.print("[yellow]Monitoring duration completed[/yellow]")
+
     def _anomalies_to_alerts(self, anomalies: List[Dict]) -> List[Alert]:
         """Convert anomaly detections to alerts"""
         alerts = []
@@ -162,7 +186,13 @@ def init(ctx):
 
 
 @cli.command()
-@click.option('--duration', '-d', default=0, help='Monitoring duration in minutes (0 for continuous)')
+@click.option(
+    "--duration",
+    "-d",
+    default=0,
+    type=click.IntRange(min=0),
+    help="Monitoring duration in minutes (0 for continuous)",
+)
 @click.pass_context
 def monitor(ctx, duration):
     """Start real-time monitoring"""
@@ -174,7 +204,7 @@ def monitor(ctx, duration):
         title="🔍 Monitoring"
     ))
     
-    asyncio.run(controller.start_monitoring())
+    asyncio.run(controller.start_monitoring(duration_minutes=duration))
 
 
 @cli.command()
