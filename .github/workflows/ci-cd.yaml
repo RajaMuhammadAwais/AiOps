@@ -54,7 +54,7 @@ jobs:
         run: mypy src/platform
 
       - name: Run tests with coverage
-        run: python -m pytest --cov=src --cov-report=term-missing --cov-report=xml tests/
+        run: python -m pytest --cov=web_dashboard --cov=src/platform --cov-report=term-missing --cov-report=xml tests/
 
       - name: Upload coverage report
         if: always()

@@ -177,6 +177,8 @@ For local development without upstream integrations, use the launcher described 
 
 The launcher uses Flask's development server and is not a production server. For production, run `web_dashboard:app` under an approved WSGI server such as Gunicorn, process manager, or container supervisor, behind an identity-aware ingress or service mesh. External TLS termination, network policy, secret injection, centralized logging, and durable audit retention belong to the deployment platform.
 
+`web_dashboard.create_app(settings, dependencies=...)` creates an independently configured Flask application for embedding and route tests; pass explicit `Settings` and client implementations instead of changing process-wide environment variables or contacting live upstreams. The `web_dashboard:app` WSGI callable remains available and loads deployment settings on first use.
+
 ## Health and observability
 
 | Endpoint | Visibility | Meaning |
