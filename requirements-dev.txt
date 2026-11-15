@@ -8,3 +8,6 @@ pytest>=8.4.0,<9
 pytest-cov>=6.0.0,<8
 psutil>=6.1.0,<8
 prometheus-client>=0.21.0,<1
+numpy
+pandas
+scikit-learn>=1.6.1

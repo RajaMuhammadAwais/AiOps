@@ -120,7 +120,7 @@ class AlertCorrelator:
             
             # Calculate TF-IDF similarity
             if not alert_texts or all(not text.strip() for text in alert_texts):
-                return [alerts]  # Return all as one group if no text content
+                return [[alert] for alert in alerts]
                 
             tfidf_matrix = self.tfidf_vectorizer.fit_transform(alert_texts)
             similarity_matrix = cosine_similarity(tfidf_matrix)
@@ -139,7 +139,7 @@ class AlertCorrelator:
             
         except Exception as e:
             logger.error(f"Error finding similar alerts: {e}")
-            return [alerts]
+            return [[alert] for alert in alerts]
     
     def _select_primary_alert(self, alert_group: List[Dict]) -> Dict:
         """Select the primary alert from a correlated group"""
