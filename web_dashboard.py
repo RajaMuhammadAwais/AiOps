@@ -279,8 +279,19 @@ def health_ready():
         prometheus.query(settings.status_query)
         alertmanager.active_alerts()
     except IntegrationUnavailable as exc:
+        logger.warning(
+            "readiness_check_failed",
+            exc_info=exc,
+            extra={"request_id": getattr(g, "request_id", None)},
+        )
         return (
-            jsonify({"status": "not_ready", "reason": str(exc), "timestamp": _now()}),
+            jsonify(
+                {
+                    "status": "not_ready",
+                    "reason": "Dependency health check failed",
+                    "timestamp": _now(),
+                }
+            ),
             503,
         )
     return jsonify({"status": "ready", "timestamp": _now()})
