@@ -118,6 +118,7 @@ class Settings:
     host: str
     port: int
     log_level: str
+    gateway_token: str | None = None
 
     @property
     def production(self) -> bool:
@@ -125,7 +126,7 @@ class Settings:
 
     @property
     def auth_enabled(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_key or self.gateway_token)
 
     @property
     def integrations_configured(self) -> bool:
@@ -154,6 +155,12 @@ class Settings:
         if api_key and len(api_key) < 24:
             raise ConfigurationError("AIOPS_API_KEY must be at least 24 characters")
 
+        gateway_token = _optional("AIOPS_GATEWAY_TOKEN")
+        if gateway_token and len(gateway_token) < 32:
+            raise ConfigurationError(
+                "AIOPS_GATEWAY_TOKEN must be at least 32 characters"
+            )
+
         log_level = _required("AIOPS_LOG_LEVEL").upper()
         if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ConfigurationError("AIOPS_LOG_LEVEL is invalid")
@@ -163,6 +170,7 @@ class Settings:
             service_name=_required("AIOPS_SERVICE_NAME"),
             version=_required("AIOPS_VERSION"),
             api_key=api_key,
+            gateway_token=gateway_token,
             allowed_origins=_origins(),
             prometheus_url=_optional("AIOPS_PROMETHEUS_URL"),
             alertmanager_url=_optional("AIOPS_ALERTMANAGER_URL"),

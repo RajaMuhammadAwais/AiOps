@@ -61,7 +61,8 @@ sequenceDiagram
     User->>App: HTTP request
     App->>App: Assign/preserve request ID
     App->>App: Rate-limit API and metrics paths
-    App->>App: Check API key when configured
+    App->>App: Authenticate API key or trusted gateway assertion
+    App->>App: Enforce exact route scope and same-origin check for gateway writes
     App->>Route: Continue if allowed
     Route->>Route: Validate route-specific input
     Route->>Client: Read/query or explicit write
@@ -73,7 +74,7 @@ sequenceDiagram
     App-->>User: Security headers + request ID + response
 ```
 
-The API-key check applies to `/api/*` and `/metrics` when `AIOPS_API_KEY` is set. Production configuration requires an API key of at least 24 characters; outside production, omitting the key leaves those routes unauthenticated. The dashboard JavaScript does not send an API key. Therefore, when API-key authentication is enabled, browser API calls need a deliberately configured same-origin session/proxy that authenticates the browser request, or the dashboard calls will receive `401`. Do not put a shared API key in browser JavaScript. CORS allowlisting alone does not provide authentication or authorization.
+`/api/*` and `/metrics` require credentials when an API key or gateway token is configured, and production still requires an API key of at least 24 characters. An API key grants only `aiops:read`. A trusted same-origin gateway may authenticate the browser session and forward a server-side `AIOPS_GATEWAY_TOKEN`, principal, and explicit scope claims; the gateway must overwrite these headers and keep its token out of browser code. Only exact route scopes authorize the two write endpoints. Gateway-authenticated unsafe methods also require an `Origin` matching `AIOPS_ALLOWED_ORIGINS` as CSRF protection. The dashboard explicitly uses same-origin cookies and never sends a shared service key. CORS allowlisting alone does not provide authentication or authorization.
 
 ### Read and analysis paths
 
@@ -84,9 +85,9 @@ The API-key check applies to `/api/*` and `/metrics` when `AIOPS_API_KEY` is set
 
 ### Explicit write paths
 
-`POST /api/suppress-alert` checks that the alert is active before requesting an Alertmanager silence. `POST /api/set-thresholds` validates exactly the `cpu`, `mem`, and `disk` values before forwarding them to the configured threshold service. AiOps does not persist threshold values itself. The dashboard has read-only action/remediation-state routes; there is no general action-execution route in the Flask control path.
+`POST /api/suppress-alert` requires `aiops:alerts:silence`, checks that the alert is active, and records the authenticated principal as the Alertmanager actor and audit subject. `POST /api/set-thresholds` requires `aiops:thresholds:write`, validates exactly the `cpu`, `mem`, and `disk` values, and records the principal before forwarding to the configured threshold service. AiOps does not persist threshold values itself. The dashboard has read-only action/remediation-state routes; there is no general action-execution route in the Flask control path.
 
-These routes are not a complete approval system. A request comment or an API key does not prove a human approval decision. Put identity, role/scope checks, approval records, and an auditable change process at a trusted gateway or a separately designed policy service before exposing writes to multiple operators.
+Scopes authorize only the narrow route action; they do not prove a separate human approval decision. Put identity verification, approval records, and an auditable change process at the trusted gateway or a separately designed policy service before exposing writes to multiple operators. `/health/live` and `/health/ready` remain public liveness/readiness endpoints.
 
 ## 3. Local developer flow
 

@@ -34,14 +34,21 @@ from src.platform.observability import (
     new_request_id,
 )
 from src.platform.security import (
+    ALERT_SILENCE_SCOPE,
+    READ_SCOPE,
+    THRESHOLDS_WRITE_SCOPE,
     AuditLog,
     AuthenticationError,
+    AuthorizationError,
+    CsrfError,
     RateLimitExceeded,
     RequestValidationError,
     SecurityPolicy,
     SlidingWindowRateLimiter,
     authorize,
     fingerprint,
+    require_same_origin,
+    require_scope,
     request_key,
     validate_json_object,
     validate_query,
@@ -49,6 +56,10 @@ from src.platform.security import (
 from src.platform.state import BoundedStore
 
 routes = Blueprint("aiops", __name__)
+ROUTE_SCOPES = {
+    ("POST", "/api/suppress-alert"): ALERT_SILENCE_SCOPE,
+    ("POST", "/api/set-thresholds"): THRESHOLDS_WRITE_SCOPE,
+}
 
 
 class PrometheusClient(Protocol):
@@ -471,8 +482,9 @@ def api_suppress_alert():
             "alert_id was not found in the active Alertmanager set"
         )
     matchers = [{"name": "fingerprint", "value": alert_id, "isRegex": False}]
+    principal = g.principal
     result = runtime.alertmanager.create_silence(
-        matchers, duration, comment, runtime.settings.service_name
+        matchers, duration, comment, principal.subject
     )
     runtime.audit_log.record(
         "alert_suppressed",
@@ -480,6 +492,8 @@ def api_suppress_alert():
         alert_id=alert_id,
         duration_minutes=duration,
         silence_id=result.get("silence_id"),
+        actor=principal.subject,
+        auth_method=principal.auth_method,
     )
     return jsonify({"status": "suppressed", "alert_id": alert_id, **result})
 
@@ -548,7 +562,14 @@ def api_set_thresholds():
         method="POST",
         payload=payload,
     )
-    runtime.audit_log.record("thresholds_updated", g.request_id, fields=list(payload))
+    principal = g.principal
+    runtime.audit_log.record(
+        "thresholds_updated",
+        g.request_id,
+        fields=list(payload),
+        actor=principal.subject,
+        auth_method=principal.auth_method,
+    )
     return jsonify(result)
 
 
@@ -629,7 +650,19 @@ def create_app(
                     "rate_limit_denied", g.request_id, path=request.path
                 )
                 raise RateLimitExceeded("Request rate limit exceeded")
-            authorize(request, app_settings)
+            principal = authorize(request, app_settings)
+            g.principal = principal
+            required_scope = ROUTE_SCOPES.get(
+                (request.method, request.path), READ_SCOPE
+            )
+            require_scope(principal, required_scope)
+            if principal.auth_method == "gateway" and request.method in {
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+            }:
+                require_same_origin(request, app_settings)
 
     @application.after_request
     def after_request(response: Response) -> Response:
@@ -664,6 +697,14 @@ def create_app(
     @application.errorhandler(AuthenticationError)
     def handle_authentication_error(error: AuthenticationError):
         return _error(str(error), 401, "authentication_required")
+
+    @application.errorhandler(CsrfError)
+    def handle_csrf_error(error: CsrfError):
+        return _error(str(error), 403, "csrf_failed")
+
+    @application.errorhandler(AuthorizationError)
+    def handle_authorization_error(error: AuthorizationError):
+        return _error(str(error), 403, "forbidden")
 
     @application.errorhandler(RateLimitExceeded)
     def handle_rate_limit_error(error: RateLimitExceeded):

@@ -145,10 +145,11 @@ The adapters append `/api/v1/query` to the Prometheus base URL and `/api/v2/aler
 
 ```bash
 export AIOPS_API_KEY="<secret-injected-by-secret-manager>"
+export AIOPS_GATEWAY_TOKEN="<separate-secret-injected-by-secret-manager>"
 export AIOPS_ALLOWED_ORIGINS="<https-origin-1>,<https-origin-2>"
 ```
 
-`AIOPS_API_KEY` is optional outside production. When set, API and metrics requests must include either `X-AiOps-API-Key` or `Authorization: Bearer <key>`. Production requires an API key of at least 24 characters. `AIOPS_ALLOWED_ORIGINS` is optional; when set, it must contain explicit origins and may not contain `*`.
+`AIOPS_API_KEY` is optional outside production and grants read access only; production requires a key of at least 24 characters. `AIOPS_GATEWAY_TOKEN` is optional, must contain at least 32 characters, and is a separate server-side secret for trusted gateway assertions. Never inject either secret into browser JavaScript. `AIOPS_ALLOWED_ORIGINS` must list exact origins (scheme and port included) used by gateway-authenticated browser writes; `*` is rejected.
 
 ### Optional integrations
 
@@ -183,16 +184,18 @@ The launcher uses Flask's development server and is not a production server. For
 
 | Endpoint | Visibility | Meaning |
 |---|---|---|
+| `/` | Public dashboard shell | Browser API calls require a configured service key or trusted same-origin gateway; deployments may also protect the page itself at the gateway. |
 | `/health/live` | Public | The Python process is running and can return an HTTP response. It does not prove upstream availability. |
 | `/health/ready` | Public | Prometheus and Alertmanager configuration and connectivity satisfy the readiness contract. Returns `503` when requirements are missing or upstream checks fail. |
-| `/metrics` | Protected when `AIOPS_API_KEY` is configured | Prometheus-compatible request counters and bounded duration sum/count. `/api/slo` is a separate process-local snapshot, not exported here. |
+| `/api/*` | Protected when `AIOPS_API_KEY` or `AIOPS_GATEWAY_TOKEN` is configured; production requires `AIOPS_API_KEY` | Read routes require `aiops:read`; writes require their exact action scope. With neither credential configured outside production, only read scope is granted anonymously. |
+| `/metrics` | Protected by the same API-key or gateway authentication | Prometheus-compatible request counters and bounded duration sum/count. `/api/slo` is a separate process-local snapshot, not exported here. |
 | `X-Request-ID` | Response header | Every response receives a request identifier; a caller-provided identifier is preserved. |
 
 The rate limiter is thread-safe but process-local and keyed by the direct peer address. When deploying multiple workers or replicas, enforce the authoritative rate limit at the gateway or use a shared limiter. Do not assume the in-process limiter is a cluster-wide security control.
 
 ## API reference
 
-All `/api/*` routes are rate-limited. When authentication is enabled, they require the configured API key. Errors use this shape:
+All `/api/*` routes and `/metrics` are rate-limited. Configure either an API key for read-only service access or a trusted gateway for authenticated browser and operator access. Errors use this shape:
 
 ```json
 {
@@ -203,6 +206,22 @@ All `/api/*` routes are rate-limited. When authentication is enabled, they requi
   "request_id": "..."
 }
 ```
+
+### Authentication, scopes and browser access
+
+`AIOPS_API_KEY` (accepted in `X-AiOps-API-Key` or as a bearer token) grants only `aiops:read`; possessing that shared service credential does not authorize a mutation. A gateway-authenticated principal receives only the explicit scopes forwarded by the trusted gateway:
+
+| Scope | Authorized operations |
+|---|---|
+| `aiops:read` | Read API routes, `/api/query`, and `/metrics` |
+| `aiops:alerts:silence` | `POST /api/suppress-alert` only |
+| `aiops:thresholds:write` | `POST /api/set-thresholds` only |
+
+For browser use, authenticate the user at a same-origin gateway/session layer. The gateway must strip any client-supplied `X-AiOps-Gateway-Token`, `X-AiOps-Principal`, and `X-AiOps-Scopes` headers, then set them itself after authenticating the session. It sends the server-side `AIOPS_GATEWAY_TOKEN` (at least 32 characters), the authenticated principal, and space-separated scope names to AiOps. Keep the gateway token in the gateway and service secret manager; never expose it or `AIOPS_API_KEY` to JavaScript. Restrict direct access to the app so requests use the trusted gateway path.
+
+The dashboard uses `credentials: 'same-origin'` so the browser session cookie is sent only to the same-origin API. Every gateway-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` also requires an `Origin` exactly matching one of `AIOPS_ALLOWED_ORIGINS`; this is the app's CSRF defense for cookie-backed gateway sessions. Configure exact origins including scheme and port. CORS response headers are not authentication: an allowed `Origin` alone never authenticates a request.
+
+`/health/live` and `/health/ready` remain public; `/` returns the dashboard shell, which deployments may separately gate at the gateway. API routes are protected according to the table above.
 
 ### Read routes
 
@@ -242,28 +261,24 @@ The service validates that `query` is a non-empty string within `AIOPS_MAX_QUERY
 
 #### Suppress an active Alertmanager alert
 
-```bash
-curl -fsS \
-  -H "Authorization: Bearer ${AIOPS_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -X POST "http://${AIOPS_HOST}:${AIOPS_PORT}/api/suppress-alert" \
-  -d '{
-    "alert_id":"<active-alert-fingerprint>",
-    "duration":60,
-    "comment":"<operator-approved reason>"
-  }'
+Send this request through the trusted gateway as a principal with `aiops:alerts:silence`; an API key alone receives `403` for this action. Do not send the gateway token from browser JavaScript.
+
+```json
+{
+  "alert_id": "<active-alert-fingerprint>",
+  "duration": 60,
+  "comment": "<operator-approved reason>"
+}
 ```
 
 The alert must exist in the current active Alertmanager response. `duration` is an integer from `1` to `10080` minutes, and `comment` must be non-empty. The service then creates an Alertmanager silence and records the operation in the bounded audit log.
 
 #### Set thresholds through the configured threshold service
 
-```bash
-curl -fsS \
-  -H "Authorization: Bearer ${AIOPS_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -X POST "http://${AIOPS_HOST}:${AIOPS_PORT}/api/set-thresholds" \
-  -d '{"cpu":80,"mem":80,"disk":85}'
+Send this request through the trusted gateway as a principal with `aiops:thresholds:write`; the alert-silence scope does not authorize threshold changes.
+
+```json
+{"cpu": 80, "mem": 80, "disk": 85}
 ```
 
 The payload must contain exactly `cpu`, `mem`, and `disk`. Each value must be numeric, must not be a boolean, and must be greater than `0` and less than `100`. The configured threshold service is the source of persistence; AiOps does not persist these values locally.
@@ -278,7 +293,9 @@ The service is intentionally conservative around missing or untrusted inputs.
 | Missing required readiness integration | `/health/ready` returns `503` with the missing setting names. |
 | Upstream failure or malformed response | Routes return `503 integration_unavailable` where the adapter/route maps that failure; schema validation is endpoint-specific, not uniform. See [ARCHITECTURE.md](ARCHITECTURE.md). |
 | Invalid JSON body or field type | Route returns `400 invalid_request`. |
-| Missing or incorrect API key when authentication is enabled | Route returns `401 authentication_required`. |
+| Missing or incorrect API key or trusted gateway assertion when authentication is enabled | Route returns `401 authentication_required`. |
+| Authenticated principal lacks the exact scope for the route | Route returns `403 forbidden`. |
+| Gateway-authenticated unsafe request has no allowed `Origin` | Route returns `403 csrf_failed`. |
 | Request budget exceeded | Route returns `429 rate_limited`. |
 | Payload above the configured maximum | Route returns `413 payload_too_large`. |
 | Common bearer, API-key, password, and secret patterns in audit details | Values are redacted before recording. |
@@ -295,8 +312,8 @@ Before exposing AiOps to operators, verify the following in the deployment envir
 
 1. The configured upstream URLs are reachable from the service network and return the documented response shapes.
 2. `AIOPS_VERIFY_TLS=true` is used unless a documented trust exception exists.
-3. A secret manager injects `AIOPS_API_KEY` and any model credential; no secret is stored in Git.
-4. Production has an identity-aware gateway or service mesh in front of the Flask process.
+3. A secret manager injects `AIOPS_API_KEY`, the separate `AIOPS_GATEWAY_TOKEN` when used, and any model credential; no secret is stored in Git.
+4. Production has an identity-aware gateway or service mesh in front of the Flask process; it strips untrusted identity headers and sets claims only after session authentication.
 5. `AIOPS_ALLOWED_ORIGINS` contains only the required browser origins, or browser access is disabled.
 6. The gateway applies shared rate limiting when more than one worker or replica is deployed.
 7. Logs and audit events are exported to a durable, access-controlled platform. The in-process audit log is bounded and is lost on restart.
