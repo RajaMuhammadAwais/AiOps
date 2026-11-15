@@ -1,6 +1,7 @@
 """
 Alert correlation and noise reduction using ML techniques
 """
+import json
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -214,26 +215,32 @@ class AlertCorrelator:
             'common_labels': {},
             'message_pattern': None
         }
-        
+
+        labels_per_alert = []
         # Collect common attributes
         for alert in alert_group:
+            labels = alert.get('labels', {})
+            if not isinstance(labels, dict):
+                labels = {}
+            labels_per_alert.append(labels)
+
             # Services
-            if 'service' in alert.get('labels', {}):
-                pattern['services'].add(alert['labels']['service'])
-            
-            # Labels that appear in all alerts
-            for key, value in alert.get('labels', {}).items():
-                if key not in pattern['common_labels']:
-                    pattern['common_labels'][key] = set()
-                pattern['common_labels'][key].add(value)
-        
-        # Keep only labels that appear in all alerts
-        all_alert_count = len(alert_group)
-        pattern['common_labels'] = {
-            k: v for k, v in pattern['common_labels'].items()
-            if len(v) == 1  # Same value across all alerts
-        }
-        
+            if 'service' in labels:
+                pattern['services'].add(labels['service'])
+
+        if labels_per_alert:
+            for key, value in labels_per_alert[0].items():
+                if not all(
+                    key in labels and labels[key] == value
+                    for labels in labels_per_alert[1:]
+                ):
+                    continue
+                try:
+                    json.dumps(value, allow_nan=False)
+                except (TypeError, ValueError):
+                    continue
+                pattern['common_labels'][key] = value
+
         # Extract message pattern using regex
         messages = [alert.get('message', '') for alert in alert_group]
         pattern['message_pattern'] = self._find_common_message_pattern(messages)
