@@ -167,7 +167,11 @@ class AlertManager:
         self, action: SelfHealingAction, alert: Dict[str, Any]
     ) -> Dict[str, Any]:
         timeout = action.parameters.get("timeout_seconds")
-        if not isinstance(timeout, (int, float)) or timeout <= 0:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout <= 0
+        ):
             return {
                 "success": False,
                 "message": "Action timeout_seconds must be supplied by action policy",

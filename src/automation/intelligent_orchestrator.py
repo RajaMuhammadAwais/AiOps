@@ -186,7 +186,11 @@ class IntelligentOrchestrator:
                 "action_type": action_type,
             }
         timeout = action.get("parameters", {}).get("timeout_seconds")
-        if not isinstance(timeout, (int, float)) or timeout <= 0:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout <= 0
+        ):
             return {
                 "success": False,
                 "message": "Action timeout_seconds must be supplied by policy",
