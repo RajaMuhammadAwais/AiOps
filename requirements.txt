@@ -31,7 +31,7 @@ psutil
 pyjwt
 pydantic
 python-dotenv
-python-jose>=3.3.0
+python-jose>=3.5.0
 python-multipart>=0.0.20
 pyyaml>=6.0.2
 requests
