@@ -10,6 +10,6 @@ jobs:
     if: ${{ vars.DEFAULT_ISSUE_ASSIGNEE != '' }}
     steps:
       - name: Assign issue to team member
-        uses: pozil/auto-assign-issue@v1.10.0
+        uses: pozil/auto-assign-issue@v4.1.0
         with:
           assignees: ${{ vars.DEFAULT_ISSUE_ASSIGNEE }}
