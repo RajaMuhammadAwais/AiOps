@@ -27,6 +27,9 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)(password\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(secret\s*[:=]\s*)[^\s,;]+"),
 )
+SENSITIVE_KEY_PATTERN = re.compile(
+    r"(?i)(api[_-]?key|authorization|password|secret|token|credential|private[_-]?key)"
+)
 
 
 class RequestValidationError(ValueError):
@@ -72,7 +75,12 @@ def redact(value: Any) -> Any:
             redacted = pattern.sub(r"\1[REDACTED]", redacted)
         return redacted
     if isinstance(value, Mapping):
-        return {str(key): redact(item) for key, item in value.items()}
+        return {
+            str(key): (
+                "[REDACTED]" if SENSITIVE_KEY_PATTERN.search(str(key)) else redact(item)
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [redact(item) for item in value]
     return value

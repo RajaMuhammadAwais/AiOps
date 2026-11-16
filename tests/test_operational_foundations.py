@@ -15,7 +15,7 @@ from werkzeug.wrappers import Response
 
 import web_dashboard
 from src.platform.config import ConfigurationError, Settings
-from src.platform.integrations import IntegrationUnavailable
+from src.platform.integrations import ApprovalRejected, IntegrationUnavailable
 from src.platform.security import (
     ALERT_SILENCE_SCOPE,
     READ_SCOPE,
@@ -55,6 +55,26 @@ class FakePrometheus:
         if self.error:
             raise self.error
         return self.result
+
+
+class FakeApproval:
+    def __init__(self, *, reject: bool = False):
+        self.reject = reject
+        self.calls: list[tuple[str, str, Mapping[str, Any]]] = []
+
+    def verify_and_consume(
+        self, approval_id: str, action: str, operation: Mapping[str, Any]
+    ) -> dict[str, str]:
+        self.calls.append((approval_id, action, dict(operation)))
+        if self.reject:
+            raise ApprovalRejected("approval denied")
+        return {
+            "approval_id": approval_id,
+            "approved_by": "approver@example.test",
+            "approved_at": "2026-11-16T00:00:00+00:00",
+            "action": action,
+            "payload_sha256": "test-payload-digest",
+        }
 
 
 class FakeAlertmanager:
@@ -139,6 +159,8 @@ def make_settings(**overrides: Any) -> Settings:
         "service_name": "aiops-test",
         "version": "test-version",
         "api_key": None,
+        "approval_url": None,
+        "approval_api_key": None,
         "gateway_token": None,
         "allowed_origins": (TEST_ORIGIN,),
         "prometheus_url": None,
@@ -175,6 +197,7 @@ def make_client(
     *,
     settings: Settings | None = None,
     prometheus: FakePrometheus | None = None,
+    approvals: FakeApproval | None = None,
     alertmanager: FakeAlertmanager | None = None,
     model: FakeModel | None = None,
     http: FakeHttp | None = None,
@@ -183,6 +206,7 @@ def make_client(
         settings or make_settings(),
         dependencies=DashboardDependencies(
             prometheus=prometheus,
+            approvals=approvals,
             alertmanager=alertmanager,
             model=model,
             http=http,
@@ -383,8 +407,14 @@ def test_api_key_is_read_only_and_cannot_authorize_mutation():
 
 def test_gateway_scopes_are_granular_and_writes_require_same_origin():
     alertmanager = FakeAlertmanager([{"id": "alert-1"}])
+    approvals = FakeApproval()
     client = make_client(
-        settings=make_settings(gateway_token=GATEWAY_TOKEN),
+        settings=make_settings(
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+        ),
+        approvals=approvals,
         alertmanager=alertmanager,
         http=FakeHttp({"updated": True}),
     )
@@ -411,7 +441,10 @@ def test_gateway_scopes_are_granular_and_writes_require_same_origin():
     authorized = client.post(
         "/api/suppress-alert",
         json=payload,
-        headers=gateway_headers(ALERT_SILENCE_SCOPE),
+        headers={
+            **gateway_headers(ALERT_SILENCE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-1",
+        },
     )
     cross_action = client.post(
         "/api/set-thresholds",
@@ -428,6 +461,7 @@ def test_gateway_scopes_are_granular_and_writes_require_same_origin():
     assert authorized.status_code == 200
     assert cross_action.status_code == 403
     assert len(alertmanager.silences) == 1
+    assert approvals.calls == [("approval-1", "suppress_alert", payload)]
 
 
 def test_gateway_claims_need_valid_secret_and_known_scope_names():
@@ -481,11 +515,17 @@ def test_threshold_validation_and_successful_fake_upstream_request():
         settings=make_settings(
             thresholds_url="https://thresholds.test/api",
             gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
         ),
+        approvals=FakeApproval(),
         http=http,
     )
 
-    headers = gateway_headers(THRESHOLDS_WRITE_SCOPE)
+    headers = {
+        **gateway_headers(THRESHOLDS_WRITE_SCOPE),
+        "X-AiOps-Approval-ID": "threshold-approval-1",
+    }
     invalid = client.post(
         "/api/set-thresholds", json={"cpu": 80, "mem": 85}, headers=headers
     )
@@ -513,14 +553,20 @@ def test_threshold_upstream_unavailable_is_not_synthesized():
         settings=make_settings(
             thresholds_url="https://thresholds.test/api",
             gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
         ),
+        approvals=FakeApproval(),
         http=FakeHttp(error=requests.ConnectionError("threshold endpoint unavailable")),
     )
 
     response = client.post(
         "/api/set-thresholds",
         json={"cpu": 80, "mem": 85, "disk": 90},
-        headers=gateway_headers(THRESHOLDS_WRITE_SCOPE),
+        headers={
+            **gateway_headers(THRESHOLDS_WRITE_SCOPE),
+            "X-AiOps-Approval-ID": "threshold-approval-2",
+        },
     )
 
     assert response.status_code == 503
@@ -529,8 +575,14 @@ def test_threshold_upstream_unavailable_is_not_synthesized():
 
 def test_silence_rejects_invalid_durations_and_accepts_valid_request():
     alertmanager = FakeAlertmanager([{"id": "alert-1"}])
+    approvals = FakeApproval()
     client = make_client(
-        settings=make_settings(gateway_token=GATEWAY_TOKEN),
+        settings=make_settings(
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+        ),
+        approvals=approvals,
         alertmanager=alertmanager,
     )
     headers = gateway_headers(ALERT_SILENCE_SCOPE)
@@ -555,7 +607,11 @@ def test_silence_rejects_invalid_durations_and_accepts_valid_request():
             "duration": 5,
             "comment": "test suppression",
         },
-        headers={**headers, "X-Request-ID": "silence-123"},
+        headers={
+            **headers,
+            "X-Request-ID": "silence-123",
+            "X-AiOps-Approval-ID": "silence-approval-1",
+        },
     )
 
     assert successful.status_code == 200
@@ -577,6 +633,47 @@ def test_silence_rejects_invalid_durations_and_accepts_valid_request():
     assert event["details"]["actor"] == "operator-1"
 
 
+def test_missing_or_rejected_approval_never_executes_a_mutation():
+    alertmanager = FakeAlertmanager([{"id": "alert-1"}])
+    payload = {"alert_id": "alert-1", "duration": 5, "comment": "test"}
+    no_service = make_client(
+        settings=make_settings(gateway_token=GATEWAY_TOKEN),
+        alertmanager=alertmanager,
+    ).post(
+        "/api/suppress-alert",
+        json=payload,
+        headers={
+            **gateway_headers(ALERT_SILENCE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-unconfigured",
+        },
+    )
+
+    rejection_alertmanager = FakeAlertmanager([{"id": "alert-1"}])
+    rejected = make_client(
+        settings=make_settings(
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+        ),
+        approvals=FakeApproval(reject=True),
+        alertmanager=rejection_alertmanager,
+    ).post(
+        "/api/suppress-alert",
+        json=payload,
+        headers={
+            **gateway_headers(ALERT_SILENCE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-rejected",
+        },
+    )
+
+    assert no_service.status_code == 503
+    assert no_service.get_json()["error"]["code"] == "integration_unavailable"
+    assert rejected.status_code == 403
+    assert rejected.get_json()["error"]["code"] == "approval_required"
+    assert alertmanager.silences == []
+    assert rejection_alertmanager.silences == []
+
+
 def test_audit_redacts_secrets_and_does_not_store_raw_query():
     client = make_client(model=FakeModel())
     runtime = client.application.extensions["aiops"]
@@ -590,7 +687,7 @@ def test_audit_redacts_secrets_and_does_not_store_raw_query():
     redaction_event = next(
         event for event in events if event["event"] == "redaction_check"
     )
-    assert redaction_event["details"]["authorization"] == "Bearer [REDACTED]"
+    assert redaction_event["details"]["authorization"] == "[REDACTED]"
     query_event = next(event for event in events if event["event"] == "ai_query")
     assert "private operational question" not in str(query_event)
 
