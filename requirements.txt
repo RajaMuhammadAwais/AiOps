@@ -39,7 +39,7 @@ rich
 schedule
 scikit-learn>=1.6.1
 seaborn>=0.13.2
-sqlalchemy>=2.0.36
+sqlalchemy>=2.1.8
 uvicorn>=0.32.1
 watchdog>=6.0.0
 s3transfer
