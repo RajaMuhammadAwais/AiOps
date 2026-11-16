@@ -29,9 +29,11 @@ Response validation is endpoint-specific, not a uniform guarantee across every c
 
 ## Health and reliability semantics
 
-`/health/live` answers whether the Python process can serve HTTP. `/health/ready` checks that the Prometheus and Alertmanager contracts are configured and reachable. A 200 liveness result must not be interpreted as dependency health. The `/api/status` response includes the configured status samples, active alert and incident counts where their sources are configured, and the locally observed request SLO snapshot.
+`/health/live` answers whether the Python process can serve HTTP. `/health/ready` checks that the Prometheus and Alertmanager contracts are configured and reachable. A 200 liveness result must not be interpreted as dependency health. The `/api/status` response includes configured status samples, active alert and incident counts where their sources are configured, and an SLO snapshot labeled with its source.
 
-The `/metrics` endpoint exposes request counters plus duration sum and retained sample count in Prometheus text format. `/api/slo` calculates a snapshot from the same bounded, process-local request window. It counts status codes `>=500` as errors, so 4xx and 429 responses count as available. These values are not durable or shared across workers. Define and validate user-facing SLIs, then use durable telemetry aggregation before relying on SLOs for paging or compliance evidence.
+`/metrics` exposes bounded-label request counters and fixed-bucket latency histograms. Route labels use Flask route templates, not raw request paths; methods and scopes are normalized to bounded values. The process-local exporter resets on restart, while Prometheus can aggregate scraped series across instances and handle counter resets with `increase()`.
+
+The request-availability SLI counts final `2xx`/`3xx` API responses as good events. Its denominator includes `2xx`/`3xx`, `429`, and `5xx` responses; other `4xx` responses are excluded as caller errors. An empty window returns `measurement_state: "no_data"` with `null` availability. Development/test uses a bounded, process-local diagnostic only. Production requires `AIOPS_PROMETHEUS_URL`, calculates counts with `sum(increase(...[AIOPS_SLO_WINDOW_MINUTES]))`, and returns `503` rather than falling back to local samples when Prometheus is unavailable. Configure Prometheus to scrape every application instance directly and retain data for at least the SLO window. The deployment owns Prometheus storage durability, retention, and alerting policy; the endpoint alone is not compliance evidence.
 
 ## Security controls
 
@@ -45,7 +47,7 @@ The in-process audit log is bounded and is not a durable compliance store. Deplo
 
 Secrets must be supplied by the deployment secret manager. The repository must not contain live credentials, endpoint-specific bearer tokens, or source fixtures. TLS verification remains enabled by default; disabling it requires an explicit deployment decision and should be limited to controlled test environments.
 
-The service should run behind an identity-aware gateway, with network policy restricting outbound connections to configured source systems and the model gateway. Store `AIOPS_GATEWAY_TOKEN` only in the gateway and app secret manager; restrict direct app access, configure exact browser origins, and have the gateway overwrite the identity/scope headers after session authentication. The gateway remains responsible for organization identity, request limits, approval records, and durable audit retention. Readiness checks only Prometheus and Alertmanager; separately smoke-test each optional integration that the release intends to use.
+The service should run behind an identity-aware gateway, with network policy restricting outbound connections to configured source systems and the model gateway. Store `AIOPS_GATEWAY_TOKEN` only in the gateway and app secret manager; restrict direct app access, configure exact browser origins, and have the gateway overwrite the identity/scope headers after session authentication. The gateway remains responsible for organization identity, request limits, approval records, and durable audit retention. For production SLOs, ensure Prometheus scrapes every app instance rather than a load-balanced address. Readiness checks Prometheus and Alertmanager; separately smoke-test each optional integration that the release intends to use.
 
 ## Migration sequence
 

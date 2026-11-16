@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
+import math
 import threading
 import time
 from typing import Any, Mapping, Protocol, cast
@@ -235,6 +237,58 @@ def _require_prometheus(expression: str | None) -> list[dict[str, Any]]:
     return _runtime().prometheus.query(expression)
 
 
+def _current_slo_snapshot(runtime: DashboardRuntime) -> dict[str, Any]:
+    settings = runtime.settings
+    if not settings.production:
+        return runtime.metrics_registry.slo_snapshot(
+            settings.slo_target, settings.slo_window_minutes
+        )
+    if not settings.prometheus_url:
+        raise IntegrationUnavailable(
+            "Prometheus is required for production SLO calculations"
+        )
+
+    service = json.dumps(settings.service_name, ensure_ascii=False)
+    window = f"{settings.slo_window_minutes}m"
+
+    def event_count(status_pattern: str) -> float:
+        selector = (
+            "aiops_http_requests_total{"
+            f'service={service},scope="api",status=~"{status_pattern}"'
+            "}"
+        )
+        expression = f"sum(increase({selector}[{window}]))"
+        samples = runtime.prometheus.query(expression)
+        total = 0.0
+        for sample in samples:
+            value = sample.get("value")
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise IntegrationUnavailable(
+                    "Prometheus returned an invalid SLO event count"
+                )
+            total += float(value)
+        return total
+
+    good_events = event_count("2..|3..")
+    total_events = event_count("2..|3..|429|5..")
+    try:
+        return runtime.metrics_registry.shared_slo_snapshot(
+            good_events,
+            total_events,
+            settings.slo_target,
+            settings.slo_window_minutes,
+        )
+    except ValueError as exc:
+        raise IntegrationUnavailable(
+            "Prometheus returned inconsistent SLO event counts"
+        ) from exc
+
+
 def _build_context() -> dict[str, Any]:
     runtime = _runtime()
     settings = runtime.settings
@@ -335,9 +389,7 @@ def api_status():
             "samples": samples,
             "active_incidents": len(incidents),
             "active_alerts": len(alerts),
-            "slo": runtime.metrics_registry.slo_snapshot(
-                settings.slo_target, settings.slo_window_minutes
-            ),
+            "slo": _current_slo_snapshot(runtime),
         }
     )
 
@@ -576,11 +628,7 @@ def api_set_thresholds():
 @routes.route("/api/slo")
 def api_slo():
     runtime = _runtime()
-    return jsonify(
-        runtime.metrics_registry.slo_snapshot(
-            runtime.settings.slo_target, runtime.settings.slo_window_minutes
-        )
-    )
+    return jsonify(_current_slo_snapshot(runtime))
 
 
 @routes.route("/api/audit")
@@ -670,9 +718,10 @@ def create_app(
         started_at = getattr(g, "started_at", time.perf_counter())
         runtime.metrics_registry.observe(
             request.method,
-            request.path,
+            request.url_rule.rule if request.url_rule else "__unmatched__",
             response.status_code,
             time.perf_counter() - started_at,
+            include_in_sli=request.path.startswith("/api/"),
         )
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -719,9 +768,19 @@ def create_app(
         return _error(str(error), 503, "integration_unavailable")
 
     @application.errorhandler(413)
-    def handle_payload_too_large(_error):
+    def handle_payload_too_large(exception):
         return _error(
             "Request payload exceeds the configured limit", 413, "payload_too_large"
+        )
+
+    @application.errorhandler(404)
+    def handle_not_found(exception):
+        return _error("Requested resource was not found", 404, "not_found")
+
+    @application.errorhandler(405)
+    def handle_method_not_allowed(exception):
+        return _error(
+            "Method is not allowed for this resource", 405, "method_not_allowed"
         )
 
     @application.errorhandler(Exception)

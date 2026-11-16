@@ -147,6 +147,12 @@ class Settings:
                 "AIOPS_ENV must be development, test, staging, or production"
             )
 
+        prometheus_url = _optional("AIOPS_PROMETHEUS_URL")
+        if environment in {"production", "prod"} and not prometheus_url:
+            raise ConfigurationError(
+                "AIOPS_PROMETHEUS_URL is required in production for shared SLO data"
+            )
+
         api_key = _optional("AIOPS_API_KEY")
         if environment in {"production", "prod"} and (not api_key or len(api_key) < 24):
             raise ConfigurationError(
@@ -172,7 +178,7 @@ class Settings:
             api_key=api_key,
             gateway_token=gateway_token,
             allowed_origins=_origins(),
-            prometheus_url=_optional("AIOPS_PROMETHEUS_URL"),
+            prometheus_url=prometheus_url,
             alertmanager_url=_optional("AIOPS_ALERTMANAGER_URL"),
             incidents_url=_optional("AIOPS_INCIDENTS_URL"),
             logs_url=_optional("AIOPS_LOGS_URL"),
