@@ -39,7 +39,7 @@ url = "https://download.pytorch.org/whl/cpu"
 flake8 = "^7.1.0"
 black = ">=24.10,<27.0"
 pytest = "^8.4.0"
-pytest-asyncio = "^0.25.0"
+pytest-asyncio = ">=0.25,<1.6"
 
 [flake8]
 max-line-length = 100
