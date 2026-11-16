@@ -164,6 +164,8 @@ export AIOPS_THRESHOLDS_URL="<threshold-write-endpoint>"
 export AIOPS_LLM_URL="<openai-compatible-chat-endpoint>"
 export AIOPS_LLM_API_KEY="<secret-if-required-by-model-endpoint>"
 export AIOPS_LLM_MODEL="<deployment-model-identifier>"
+export AIOPS_APPROVAL_URL="<approval-verify-and-consume-https-endpoint>"
+export AIOPS_APPROVAL_API_KEY="<approval-service-secret-at-least-24-characters>"
 ```
 
 The angle-bracket values above are configuration placeholders, not defaults. Do not copy credentials, production URLs, PromQL expressions, or tokens into the repository.
@@ -217,6 +219,8 @@ All `/api/*` routes and `/metrics` are rate-limited. Configure either an API key
 | `aiops:alerts:silence` | `POST /api/suppress-alert` only |
 | `aiops:thresholds:write` | `POST /api/set-thresholds` only |
 
+Each mutating request also requires an `X-AiOps-Approval-ID` from the external approval service. Before making a change, AiOps verifies and atomically consumes a one-time approval bound to the exact action and canonical payload digest. The approval service must return an approved identity and timestamp; missing approval configuration fails closed with `503`, while a rejected, reused, or mismatched approval returns `403`. Configure `AIOPS_APPROVAL_URL` as an HTTPS endpoint without embedded credentials or query/fragment data, and keep its separate API key in the deployment secret manager. A scope-authorized gateway identity is still required; an approval alone does not authorize the caller. See [the model-assisted request security contract](docs/security/model-assisted-requests.md) for the trust boundaries and data contract.
+
 For browser use, authenticate the user at a same-origin gateway/session layer. The gateway must strip any client-supplied `X-AiOps-Gateway-Token`, `X-AiOps-Principal`, and `X-AiOps-Scopes` headers, then set them itself after authenticating the session. It sends the server-side `AIOPS_GATEWAY_TOKEN` (at least 32 characters), the authenticated principal, and space-separated scope names to AiOps. Keep the gateway token in the gateway and service secret manager; never expose it or `AIOPS_API_KEY` to JavaScript. Restrict direct access to the app so requests use the trusted gateway path.
 
 The dashboard uses `credentials: 'same-origin'` so the browser session cookie is sent only to the same-origin API. Every gateway-authenticated `POST`, `PUT`, `PATCH`, or `DELETE` also requires an `Origin` exactly matching one of `AIOPS_ALLOWED_ORIGINS`; this is the app's CSRF defense for cookie-backed gateway sessions. Configure exact origins including scheme and port. CORS response headers are not authentication: an allowed `Origin` alone never authenticates a request.
@@ -261,7 +265,7 @@ The service validates that `query` is a non-empty string within `AIOPS_MAX_QUERY
 
 #### Suppress an active Alertmanager alert
 
-Send this request through the trusted gateway as a principal with `aiops:alerts:silence`; an API key alone receives `403` for this action. Do not send the gateway token from browser JavaScript.
+Send this request through the trusted gateway as a principal with `aiops:alerts:silence`, and include the one-time `X-AiOps-Approval-ID` header. An API key alone receives `403` for this action. Do not send the gateway token from browser JavaScript.
 
 ```json
 {
@@ -275,7 +279,7 @@ The alert must exist in the current active Alertmanager response. `duration` is 
 
 #### Set thresholds through the configured threshold service
 
-Send this request through the trusted gateway as a principal with `aiops:thresholds:write`; the alert-silence scope does not authorize threshold changes.
+Send this request through the trusted gateway as a principal with `aiops:thresholds:write`, and include the one-time `X-AiOps-Approval-ID` header; the alert-silence scope does not authorize threshold changes.
 
 ```json
 {"cpu": 80, "mem": 80, "disk": 85}
