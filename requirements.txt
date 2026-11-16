@@ -6,7 +6,7 @@ anyio
 asyncio-mqtt
 bcrypt>=4.2.1
 blinker
-boto3>=1.35.87
+boto3>=1.44.2
 celery>=5.4.0
 coverage>=7.6.9
 elasticsearch
