@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from typing import Tuple
+from urllib.parse import urlsplit
 
 
 class ConfigurationError(ValueError):
@@ -92,6 +93,8 @@ class Settings:
     service_name: str
     version: str
     api_key: str | None
+    approval_url: str | None
+    approval_api_key: str | None
     allowed_origins: Tuple[str, ...]
     prometheus_url: str | None
     alertmanager_url: str | None
@@ -167,6 +170,30 @@ class Settings:
                 "AIOPS_GATEWAY_TOKEN must be at least 32 characters"
             )
 
+        approval_url = _optional("AIOPS_APPROVAL_URL")
+        approval_api_key = _optional("AIOPS_APPROVAL_API_KEY")
+        if approval_api_key and len(approval_api_key) < 24:
+            raise ConfigurationError(
+                "AIOPS_APPROVAL_API_KEY must be at least 24 characters"
+            )
+        if bool(approval_url) != bool(approval_api_key):
+            raise ConfigurationError(
+                "AIOPS_APPROVAL_URL and AIOPS_APPROVAL_API_KEY must be configured together"
+            )
+        if approval_url:
+            parsed_approval_url = urlsplit(approval_url)
+            if (
+                parsed_approval_url.scheme != "https"
+                or not parsed_approval_url.hostname
+                or parsed_approval_url.username
+                or parsed_approval_url.password
+                or parsed_approval_url.query
+                or parsed_approval_url.fragment
+            ):
+                raise ConfigurationError(
+                    "AIOPS_APPROVAL_URL must use HTTPS without credentials, query, or fragment data"
+                )
+
         log_level = _required("AIOPS_LOG_LEVEL").upper()
         if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ConfigurationError("AIOPS_LOG_LEVEL is invalid")
@@ -176,6 +203,8 @@ class Settings:
             service_name=_required("AIOPS_SERVICE_NAME"),
             version=_required("AIOPS_VERSION"),
             api_key=api_key,
+            approval_url=approval_url,
+            approval_api_key=approval_api_key,
             gateway_token=gateway_token,
             allowed_origins=_origins(),
             prometheus_url=prometheus_url,
