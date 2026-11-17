@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.platform.config import UpstreamSettings
 from src.platform.integrations import (
     ApprovalAdapter,
     ApprovalRejected,
@@ -44,6 +45,12 @@ def _model_adapter(response_text="analysis only"):
         max_query_length=2000,
         prometheus_timeout_seconds=5,
         verify_tls=True,
+        upstream=lambda _name: UpstreamSettings(
+            5,
+            True,
+            "bearer",
+            bearer_token="model-credential-never-in-prompt",
+        ),
     )
     adapter = ModelAdapter(settings)
     adapter.session = FakeSession(
