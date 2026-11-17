@@ -10,6 +10,7 @@ import math
 import threading
 import time
 from typing import Any, Mapping, Protocol, cast
+from uuid import uuid4
 
 from flask import (
     Blueprint,
@@ -23,6 +24,7 @@ from flask import (
 )
 import requests
 
+from src.platform.audit import AuditEvent, AuditSink, AuditSinkUnavailable
 from src.platform.config import Settings
 from src.platform.integrations import (
     ApprovalAdapter,
@@ -63,6 +65,10 @@ routes = Blueprint("aiops", __name__)
 ROUTE_SCOPES = {
     ("POST", "/api/suppress-alert"): ALERT_SILENCE_SCOPE,
     ("POST", "/api/set-thresholds"): THRESHOLDS_WRITE_SCOPE,
+}
+MUTATION_ACTIONS = {
+    ("POST", "/api/suppress-alert"): "suppress_alert",
+    ("POST", "/api/set-thresholds"): "set_thresholds",
 }
 
 
@@ -113,13 +119,14 @@ class HttpClient(Protocol):
 
 @dataclass(frozen=True)
 class DashboardDependencies:
-    """External clients optionally supplied by a deployment or a test."""
+    """External clients and an optional audit sink supplied by deployment or tests."""
 
     prometheus: PrometheusClient | None = None
     approvals: ApprovalClient | None = None
     alertmanager: AlertmanagerClient | None = None
     model: ModelClient | None = None
     http: HttpClient | None = None
+    audit_sink: AuditSink | None = None
 
 
 @dataclass
@@ -132,6 +139,7 @@ class DashboardRuntime:
     alertmanager: AlertmanagerClient
     model: ModelClient
     http: HttpClient
+    audit_sink: AuditSink | None
     metrics_registry: MetricsRegistry
     rate_limiter: SlidingWindowRateLimiter
     audit_log: AuditLog
@@ -148,12 +156,110 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _error(message: str, status: int, code: str) -> tuple[Any, int]:
+def _mutation_target(action: str) -> str:
+    if action == "set_thresholds":
+        return "thresholds"
+    payload = request.get_json(silent=True)
+    target = payload.get("alert_id") if isinstance(payload, Mapping) else None
+    if isinstance(target, str) and target.strip():
+        return target.strip()[:128]
+    return "unknown"
+
+
+def _make_audit_event(
+    action: str,
+    target: str,
+    outcome: str,
+    phase: str,
+    *,
+    details: Mapping[str, Any] | None = None,
+) -> AuditEvent:
+    runtime = _runtime()
+    principal = getattr(g, "principal", None)
+    event_details: dict[str, Any] = {
+        "action": action,
+        "target": target,
+        "phase": phase,
+    }
+    if principal is not None:
+        event_details["auth_method"] = principal.auth_method
+    if details:
+        event_details.update(details)
+    return AuditEvent.create(
+        event_id=uuid4().hex,
+        occurred_at=_now(),
+        event_type=f"mutation.{action}",
+        request_id=getattr(g, "request_id", "unknown"),
+        actor=(principal.subject if principal is not None else "unauthenticated"),
+        tenant="not-configured",
+        environment=runtime.settings.environment,
+        outcome=outcome,
+        details=event_details,
+    )
+
+
+def _append_required_mutation_event(
+    action: str,
+    target: str,
+    outcome: str,
+    phase: str,
+    *,
+    operation_outcome: str,
+) -> None:
+    runtime = _runtime()
+    if runtime.audit_sink is None:
+        raise AuditSinkUnavailable(operation_outcome=operation_outcome)
+    event = _make_audit_event(action, target, outcome, phase)
+    try:
+        runtime.audit_sink.append(event)
+    except Exception as exc:
+        raise AuditSinkUnavailable(operation_outcome=operation_outcome) from exc
+
+
+def _record_denial_best_effort(outcome: str, *, phase: str = "denial") -> None:
+    """Audit denied or pre-mutation write failures without weakening the response."""
+    action = MUTATION_ACTIONS.get((request.method, request.path))
+    if action is None:
+        return
+    runtime = _runtime()
+    event = _make_audit_event(
+        action,
+        _mutation_target(action),
+        outcome,
+        phase,
+    )
+    if runtime.audit_sink is None:
+        current_app.logger.warning(
+            "mutation_denial_not_durably_audited",
+            extra={
+                "request_id": event.request_id,
+                "action": action,
+                "actor": event.actor,
+                "outcome": event.outcome,
+            },
+        )
+        return
+    try:
+        runtime.audit_sink.append(event)
+    except Exception:
+        current_app.logger.warning(
+            "mutation_denial_audit_sink_failed",
+            extra={
+                "request_id": event.request_id,
+                "action": action,
+                "actor": event.actor,
+                "outcome": event.outcome,
+            },
+        )
+
+
+def _error(message: str, status: int, code: str, **details: Any) -> tuple[Any, int]:
     return (
         jsonify(
             {
                 "error": {"code": code, "message": message},
                 "request_id": getattr(g, "request_id", None),
+                **details,
             }
         ),
         status,
@@ -314,7 +420,7 @@ def _verify_mutation_approval(
             "operator_approval_rejected",
             g.request_id,
             action=action,
-            approval_id=approval_id[:200],
+            approval_id_fingerprint=fingerprint(approval_id),
             actor=g.principal.subject,
         )
         raise
@@ -322,7 +428,7 @@ def _verify_mutation_approval(
         "operator_approval_verified",
         g.request_id,
         action=action,
-        approval_id=approval["approval_id"],
+        approval_id_fingerprint=fingerprint(approval["approval_id"]),
         approved_by=approval["approved_by"],
         approved_at=approval["approved_at"],
         payload_sha256=approval["payload_sha256"],
@@ -569,7 +675,11 @@ def api_suppress_alert():
         )
     if not isinstance(comment, str) or not comment.strip():
         raise RequestValidationError("comment must be a non-empty string")
-    alerts = _refresh_alerts()
+    try:
+        alerts = _refresh_alerts()
+    except Exception:
+        _record_denial_best_effort("alert_lookup_unavailable", phase="failure")
+        raise
     selected = next((alert for alert in alerts if alert.get("id") == alert_id), None)
     if not selected:
         raise RequestValidationError(
@@ -577,24 +687,84 @@ def api_suppress_alert():
         )
     matchers = [{"name": "fingerprint", "value": alert_id, "isRegex": False}]
     principal = g.principal
-    approval = _verify_mutation_approval(
-        "suppress_alert",
-        {"alert_id": alert_id, "duration": duration, "comment": comment},
+    action = "suppress_alert"
+    target = alert_id
+    _append_required_mutation_event(
+        action,
+        target,
+        "started",
+        "attempt",
+        operation_outcome="not_started",
     )
-    result = runtime.alertmanager.create_silence(
-        matchers, duration, comment, principal.subject
+    try:
+        approval = _verify_mutation_approval(
+            action,
+            {"alert_id": alert_id, "duration": duration, "comment": comment},
+        )
+    except ApprovalRejected:
+        _append_required_mutation_event(
+            action,
+            target,
+            "rejected",
+            "result",
+            operation_outcome="not_started",
+        )
+        raise
+    except IntegrationUnavailable:
+        _append_required_mutation_event(
+            action,
+            target,
+            "not_executed",
+            "result",
+            operation_outcome="not_started",
+        )
+        raise
+    except Exception:
+        _append_required_mutation_event(
+            action,
+            target,
+            "not_executed",
+            "result",
+            operation_outcome="not_started",
+        )
+        raise
+    try:
+        result = runtime.alertmanager.create_silence(
+            matchers, duration, comment, principal.subject
+        )
+    except Exception:
+        _append_required_mutation_event(
+            action,
+            target,
+            "unknown",
+            "result",
+            operation_outcome="unknown",
+        )
+        raise
+    _append_required_mutation_event(
+        action,
+        target,
+        "succeeded",
+        "result",
+        operation_outcome="succeeded",
     )
-    runtime.audit_log.record(
-        "alert_suppressed",
-        g.request_id,
-        alert_id=alert_id,
-        duration_minutes=duration,
-        silence_id=result.get("silence_id"),
-        actor=principal.subject,
-        auth_method=principal.auth_method,
-        approval_id=approval["approval_id"],
-        approved_by=approval["approved_by"],
-    )
+    try:
+        runtime.audit_log.record(
+            "alert_suppressed",
+            g.request_id,
+            alert_id=alert_id,
+            duration_minutes=duration,
+            silence_id=result.get("silence_id"),
+            actor=principal.subject,
+            auth_method=principal.auth_method,
+            approval_id_fingerprint=fingerprint(approval["approval_id"]),
+            approved_by=approval["approved_by"],
+        )
+    except Exception:
+        current_app.logger.warning(
+            "legacy_mutation_audit_log_failed",
+            extra={"request_id": g.request_id, "action": action},
+        )
     return jsonify({"status": "suppressed", "alert_id": alert_id, **result})
 
 
@@ -656,23 +826,83 @@ def api_set_thresholds():
             or not 0 < float(value) < 100
         ):
             raise RequestValidationError(f"{key} must be a number between 0 and 100")
-    approval = _verify_mutation_approval("set_thresholds", payload)
-    result = _external_json(
-        runtime.settings.thresholds_url,
-        "Threshold service",
-        method="POST",
-        payload=payload,
+    action = "set_thresholds"
+    target = "thresholds"
+    _append_required_mutation_event(
+        action,
+        target,
+        "started",
+        "attempt",
+        operation_outcome="not_started",
+    )
+    try:
+        approval = _verify_mutation_approval(action, payload)
+    except ApprovalRejected:
+        _append_required_mutation_event(
+            action,
+            target,
+            "rejected",
+            "result",
+            operation_outcome="not_started",
+        )
+        raise
+    except IntegrationUnavailable:
+        _append_required_mutation_event(
+            action,
+            target,
+            "not_executed",
+            "result",
+            operation_outcome="not_started",
+        )
+        raise
+    except Exception:
+        _append_required_mutation_event(
+            action,
+            target,
+            "not_executed",
+            "result",
+            operation_outcome="not_started",
+        )
+        raise
+    try:
+        result = _external_json(
+            runtime.settings.thresholds_url,
+            "Threshold service",
+            method="POST",
+            payload=payload,
+        )
+    except Exception:
+        _append_required_mutation_event(
+            action,
+            target,
+            "unknown",
+            "result",
+            operation_outcome="unknown",
+        )
+        raise
+    _append_required_mutation_event(
+        action,
+        target,
+        "succeeded",
+        "result",
+        operation_outcome="succeeded",
     )
     principal = g.principal
-    runtime.audit_log.record(
-        "thresholds_updated",
-        g.request_id,
-        fields=list(payload),
-        actor=principal.subject,
-        auth_method=principal.auth_method,
-        approval_id=approval["approval_id"],
-        approved_by=approval["approved_by"],
-    )
+    try:
+        runtime.audit_log.record(
+            "thresholds_updated",
+            g.request_id,
+            fields=list(payload),
+            actor=principal.subject,
+            auth_method=principal.auth_method,
+            approval_id_fingerprint=fingerprint(approval["approval_id"]),
+            approved_by=approval["approved_by"],
+        )
+    except Exception:
+        current_app.logger.warning(
+            "legacy_mutation_audit_log_failed",
+            extra={"request_id": g.request_id, "action": action},
+        )
     return jsonify(result)
 
 
@@ -698,8 +928,9 @@ def create_app(
 ) -> Flask:
     """Create an independently configured Flask application.
 
-    Supplying ``settings`` and fake clients through ``dependencies`` keeps route
-    tests isolated from process environment variables and live upstream services.
+    Supplying ``settings`` and clients (including an optional audit sink) through
+    ``dependencies`` keeps route tests isolated from process environment variables
+    and live upstream services.
     The environment is read only when callers omit ``settings``.
     """
     app_settings = settings if settings is not None else Settings.from_env()
@@ -725,6 +956,7 @@ def create_app(
             else ApprovalAdapter(app_settings)
         ),
         http=clients.http if clients.http is not None else requests.Session(),
+        audit_sink=clients.audit_sink,
         metrics_registry=MetricsRegistry(
             max_samples=app_settings.event_store_max_entries
         ),
@@ -797,23 +1029,59 @@ def create_app(
 
     @application.errorhandler(RequestValidationError)
     def handle_validation_error(error: RequestValidationError):
+        _record_denial_best_effort("invalid_request")
         return _error(str(error), 400, "invalid_request")
 
     @application.errorhandler(AuthenticationError)
     def handle_authentication_error(error: AuthenticationError):
+        _record_denial_best_effort("authentication_denied")
         return _error(str(error), 401, "authentication_required")
 
     @application.errorhandler(CsrfError)
     def handle_csrf_error(error: CsrfError):
+        _record_denial_best_effort("csrf_denied")
         return _error(str(error), 403, "csrf_failed")
 
     @application.errorhandler(AuthorizationError)
     def handle_authorization_error(error: AuthorizationError):
+        _record_denial_best_effort("authorization_denied")
         return _error(str(error), 403, "forbidden")
 
     @application.errorhandler(RateLimitExceeded)
     def handle_rate_limit_error(error: RateLimitExceeded):
+        _record_denial_best_effort("rate_limited")
         return _error(str(error), 429, "rate_limited")
+
+    @application.errorhandler(AuditSinkUnavailable)
+    def handle_audit_sink_error(error: AuditSinkUnavailable):
+        current_app.logger.error(
+            "durable_audit_sink_unavailable",
+            extra={
+                "request_id": getattr(g, "request_id", None),
+                "operation_outcome": error.operation_outcome,
+            },
+        )
+        messages = {
+            "not_started": "Mutation was not attempted because durable audit is unavailable",
+            "succeeded": (
+                "Mutation succeeded but its final audit record was not stored; "
+                "reconcile before retrying"
+            ),
+            "unknown": (
+                "Mutation outcome is unknown and could not be audited; "
+                "reconcile before retrying"
+            ),
+        }
+        message = messages.get(
+            error.operation_outcome,
+            "Mutation outcome could not be durably audited; reconcile before retrying",
+        )
+        return _error(
+            message,
+            503,
+            "audit_sink_unavailable",
+            operation_outcome=error.operation_outcome,
+        )
 
     @application.errorhandler(IntegrationUnavailable)
     def handle_integration_error(error: IntegrationUnavailable):

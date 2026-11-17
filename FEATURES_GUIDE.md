@@ -24,13 +24,13 @@ Request metrics, the sliding-window limiter, and the web app's legacy `AuditLog`
 
 API and metrics paths accept `X-AiOps-API-Key` or a bearer token when `AIOPS_API_KEY` is configured. Authentication is optional outside production; production configuration requires a key of at least 24 characters. The dashboard JavaScript does not send this key, so a protected dashboard needs a reviewed same-origin browser session/proxy. Never embed a shared service key in browser code.
 
-The assistant route sends the user question and selected configured operational context to the configured model endpoint. It does not provide the model a local shell or a general action tool. Model output is untrusted input: prompt wording is not a security boundary. Keep privileged writes behind deterministic authorization and explicit human approval implemented at a trusted layer; the current Flask API key alone is not role-based authorization or an approval record.
+The assistant route sends the user question and selected configured operational context to the configured model endpoint. It does not provide the model a local shell or a general action tool. Model output is untrusted input: prompt wording is not a security boundary. Privileged writes require deterministic route scopes and a verified one-time approval from the configured approval service; the read-only Flask API key alone is not role-based authorization or an approval record.
 
 ## State and audit
 
-`BoundedStore` is an in-memory utility; the dashboard writes refresh snapshots to it but its routes do not read those snapshots. It is not a persistent database or response cache. The legacy web `AuditLog` is bounded, in-memory, and records selected events. A separate versioned `AuditEvent` and `AuditSink` protocol exists, but no durable sink is wired into the dashboard mutation routes.
+`BoundedStore` is an in-memory utility; the dashboard writes refresh snapshots to it but its routes do not read those snapshots. It is not a persistent database or response cache. The legacy web `AuditLog` is bounded, in-memory, and diagnostic only. Mutation routes use the versioned `AuditEvent`/`AuditSink` contract when a deployment injects its own durable, access-controlled sink. No storage vendor or sink implementation is bundled. The default `web_dashboard:app` target has no sink and fails closed for writes; a deployment enabling writes must use a custom WSGI factory and inject the sink through `DashboardDependencies`.
 
-The runtime has no shared limiter, distributed metrics aggregation, or durable audit store. Those controls must be supplied or implemented before scaling to multiple workers/replicas or relying on retained operational evidence.
+The runtime has no shared limiter or distributed metrics aggregation, and the repository does not provide a durable sink implementation. Supply shared controls before scaling to multiple workers/replicas, and integration-test the deployment's sink for durable retained evidence and outage behavior.
 
 ## Repository modules outside the dashboard path
 

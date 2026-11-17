@@ -31,7 +31,16 @@ class AuditEventValidationError(ValueError):
 
 
 class AuditSinkUnavailable(RuntimeError):
-    """Raised when an audit event cannot be accepted by the configured sink."""
+    """Raised when a sink cannot accept an event, with mutation state preserved."""
+
+    def __init__(
+        self,
+        message: str = "Durable audit sink is unavailable",
+        *,
+        operation_outcome: str = "not_started",
+    ) -> None:
+        super().__init__(message)
+        self.operation_outcome = operation_outcome
 
 
 class AuditSink(Protocol):

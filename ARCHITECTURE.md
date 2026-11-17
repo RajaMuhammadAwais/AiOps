@@ -17,7 +17,7 @@ flowchart LR
         controls["Request controls<br/>request ID, rate limit, optional API-key auth"]
         routes["Dashboard and JSON routes<br/>validation + response mapping"]
         adapters["Integration clients<br/>Prometheus, Alertmanager, model,<br/>and generic JSON requests"]
-        memory["Process-local only<br/>rate limiter, metrics, bounded audit log"]
+        memory["Process-local only<br/>rate limiter, metrics, legacy audit log"]
         app --> controls --> routes --> adapters
         config --> app
         controls --> memory
@@ -29,6 +29,7 @@ flowchart LR
     alertmanager["Alertmanager"]
     services["Configured JSON services<br/>incidents, logs, action state,<br/>insights, thresholds"]
     model["Configured model endpoint"]
+    audit["Deployment-injected AuditSink<br/>durability and access control are deployment-owned"]
 
     operator --> browser
     browser -->|"local HTTP or deployed HTTPS"| app
@@ -38,13 +39,14 @@ flowchart LR
     adapters -->|"alerts / silence API"| alertmanager
     adapters -->|"configured JSON requests"| services
     adapters -->|"question + selected context"| model
+    routes -->|"versioned mutation attempt/result"| audit
 ```
 
 The dotted ingress path is a deployment option, not an application component. Flask documents its built-in server as development-only and recommends a production WSGI server or hosting platform for deployments. [3] The diagram does not imply that upstream systems, a database, an identity provider, or a durable telemetry backend are included in this repository.
 
 ## 2. Request flow
 
-`web_dashboard.py` is the composition root. `create_app(settings, dependencies=...)` builds an independently configured Flask application, adapters, and in-process registries; tests can pass explicit settings and fake upstream clients without changing process-wide environment variables. The production `web_dashboard:app` WSGI callable remains available and loads deployment settings when first used, while importing the module itself does not require deployment configuration. Flask documents the factory pattern as a way to create app instances with different settings for testing. [9]
+`web_dashboard.py` is the composition root. `create_app(settings, dependencies=...)` builds an independently configured Flask application, adapters, in-process registries, and an optional deployment-supplied `AuditSink`; tests can pass explicit settings and fake clients without changing process-wide environment variables. The default `web_dashboard:app` WSGI callable loads deployment settings when first used but intentionally has no audit sink, so its mutation routes fail closed. A deployment that enables writes must use its own WSGI factory to inject a durable, access-controlled sink. Importing the module itself does not require deployment configuration. Flask documents the factory pattern as a way to create app instances with different settings for testing. [9]
 
 Request processing is currently:
 
@@ -57,6 +59,7 @@ sequenceDiagram
     participant Client as Configured adapter/client
     participant Upstream as Upstream service
     participant Local as Process-local metrics/audit
+    participant Sink as Deployment-injected AuditSink
 
     User->>App: HTTP request
     App->>App: Assign/preserve request ID
@@ -65,11 +68,18 @@ sequenceDiagram
     App->>App: Enforce exact route scope and same-origin check for gateway writes
     App->>Route: Continue if allowed
     Route->>Route: Validate route-specific input
+    opt mutating route
+        Route->>Sink: Append versioned attempt event
+        Sink-->>Route: Accepted or fail closed
+    end
     Route->>Client: Read/query or explicit write
     Client->>Upstream: Configured HTTP request
     Upstream-->>Client: Response or upstream failure
     Client-->>Route: Parsed result / integration error
     Route->>Local: Record selected audit event and request metrics
+    opt mutating route
+        Route->>Sink: Append versioned outcome event
+    end
     Route-->>App: JSON or dashboard response
     App-->>User: Security headers + request ID + response
 ```
@@ -85,9 +95,9 @@ sequenceDiagram
 
 ### Explicit write paths
 
-`POST /api/suppress-alert` requires `aiops:alerts:silence`, checks that the alert is active, and records the authenticated principal as the Alertmanager actor and audit subject. `POST /api/set-thresholds` requires `aiops:thresholds:write`, validates exactly the `cpu`, `mem`, and `disk` values, and records the principal before forwarding to the configured threshold service. AiOps does not persist threshold values itself. The dashboard has read-only action/remediation-state routes; there is no general action-execution route in the Flask control path.
+`POST /api/suppress-alert` requires `aiops:alerts:silence`, checks that the alert is active, verifies one-time approval, and records the authenticated principal as the Alertmanager actor. `POST /api/set-thresholds` requires `aiops:thresholds:write`, validates exactly the `cpu`, `mem`, and `disk` values, verifies one-time approval, and forwards to the configured threshold service. Both routes require an injected `AuditSink`, append a versioned attempt event before approval/write, and append the outcome afterward; neither stores comments or threshold values in the typed event. Missing or failing sink prevents the mutation. If the upstream may have acted but the response is lost, the durable outcome is `unknown`; if a final audit append fails after a successful upstream write, the `503` reports `operation_outcome: "succeeded"` and requires reconciliation before retry. AiOps does not persist threshold values itself. The dashboard has read-only action/remediation-state routes; there is no general action-execution route in the Flask control path.
 
-Scopes authorize only the narrow route action; they do not prove a separate human approval decision. Put identity verification, approval records, and an auditable change process at the trusted gateway or a separately designed policy service before exposing writes to multiple operators. `/health/live` and `/health/ready` remain public liveness/readiness endpoints.
+Scopes authorize only the narrow route action; the app separately verifies and consumes a one-time approval from its configured approval service. Authentication, authorization, CSRF, rate-limit, and request-validation denials are best-effort audit events when a sink is available; their denial response is preserved if that append fails. The sink interface is storage-neutral, but its implementation must enforce deployment access controls and durable retention. `/health/live` and `/health/ready` remain public liveness/readiness endpoints.
 
 ## 3. Local developer flow
 
@@ -127,7 +137,7 @@ Some runtime state remains process-local and is lost on restart:
 - `MetricsRegistry` holds per-process request counters, a bounded local diagnostic window, and fixed-bucket latency histograms. `/metrics` exports counters and histograms with bounded method, scope, status, and Flask route-template labels. Scraping each instance into Prometheus allows those series to be aggregated; the local exporter itself is not durable or shared.
 - The request-availability SLI defines good events as API `2xx`/`3xx` responses; the denominator includes `2xx`/`3xx`, `429`, and `5xx`. Other `4xx` responses are excluded as caller errors. An empty window returns no-data/null availability, not 100%.
 - In development/test, `/api/slo` reports a bounded, process-local diagnostic. Production requires `AIOPS_PROMETHEUS_URL` and computes good/total events with Prometheus `sum(increase(...[window]))` over every instance scraped by the configured server. It returns `503` if shared telemetry is unavailable instead of falling back to local counters. Configure direct scraping of every instance and adequate retention; shared storage durability is still deployment-owned.
-- The web app's legacy `AuditLog` is bounded and records selected events, not every request or every failure. The separate typed `AuditEvent`/`AuditSink` contract exists, but no durable sink is wired to the web routes.
+- The web app's legacy `AuditLog` remains bounded, process-local, and limited to selected diagnostic events. Mutation routes now use the typed `AuditEvent`/`AuditSink` contract when a deployment injects a sink; the repository deliberately does not choose a storage vendor or claim that the sink is durable without deployment verification. Missing/failing sinks block writes, while denial auditing is best-effort and never changes a deny decision.
 - `BoundedStore` is currently written by dashboard refresh helpers but not read by the API routes. It is not a response cache or persistent data store.
 
 OpenTelemetry groups telemetry into traces, metrics, and logs; these signals help investigate service behavior from different angles. [4] Google SRE recommends monitoring latency, traffic, errors, and saturation, and designing SLIs around what users experience. [5] [6] The exporter supplies request counts and latency distributions but not traces or saturation signals. Validate scrape coverage, retention, and the chosen SLI against actual user journeys before relying on SLOs for paging, contractual reporting, or compliance evidence.
@@ -151,7 +161,7 @@ These are recommendations, not claims about existing code. They are ordered to m
 3. **Close the authorization gap.** Decide whether the browser UI uses a same-origin authenticated session or is disabled when API-key protection is active. Add role/scope authorization for write routes and a verified human-approval record before expanding access.
 4. **Harden each integration contract.** For every configured endpoint, document authentication, timeout, TLS, request/response schema, retry/idempotency behavior, and failure mapping. Add mock-based contract tests and deployment smoke tests; never substitute fabricated data.
 5. **Validate reliability data at scale.** The service defines an API request SLI and exports fixed-bucket histograms; production `/api/slo` aggregates counter increases through the configured Prometheus server. Scrape every app instance directly, retain data for at least the configured window, validate the status policy against user journeys, and review percentile/burn-rate thresholds before using them for paging or release gates. Google SRE recommends starting from critical user interactions and iterating measured SLOs rather than guessing targets. [6]
-6. **Make remaining controls shared and durable where needed.** The rate limiter and selected-event audit log are still process-local. Use deployment-owned shared services where multi-worker enforcement or durable evidence is required, and test restart and multi-worker behavior.
+6. **Verify deployment-owned controls.** Mutation routes require a deployment-injected, access-controlled audit sink and fail closed when it is unavailable; test append durability, retention, outage behavior, and restart recovery. The legacy diagnostic log and rate limiter remain process-local; use shared services where multi-worker behavior is required.
 7. **Threat-model the model boundary.** Classify which operational fields may be sent to the configured model, test direct and indirect prompt injection, validate output before display/use, and keep all privileged actions behind deterministic policy and human approval. [7] [8]
 
 ## References

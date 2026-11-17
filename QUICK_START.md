@@ -48,7 +48,7 @@ python -m unittest discover -s tests -v
 gunicorn --bind "${AIOPS_HOST}:${AIOPS_PORT}" web_dashboard:app
 ```
 
-Production also needs real, reachable integrations, deployment-managed secrets, TLS, an identity-aware ingress, shared rate limiting when running multiple workers, and durable audit/log handling. Do not treat a successful local liveness check or the in-process audit view as production readiness.
+Production also needs real, reachable integrations, deployment-managed secrets, TLS, an identity-aware ingress, shared rate limiting when running multiple workers, and durable audit/log handling. The default `web_dashboard:app` has no injected audit sink and therefore rejects mutation requests; a deployment that enables writes must use a custom WSGI factory with a verified, access-controlled sink. Do not treat a successful local liveness check or the in-process audit view as production readiness.
 
 ## Research basis
 
