@@ -390,6 +390,40 @@ def test_gateway_token_configuration_requires_a_long_secret(
     assert Settings.from_env().auth_enabled
 
 
+def test_production_configuration_requires_shared_prometheus_for_slo(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    values = {
+        "AIOPS_ENV": "production",
+        "AIOPS_SERVICE_NAME": "aiops-test",
+        "AIOPS_VERSION": "test-version",
+        "AIOPS_LOG_LEVEL": "INFO",
+        "AIOPS_PROMETHEUS_TIMEOUT_SECONDS": "5",
+        "AIOPS_VERIFY_TLS": "true",
+        "AIOPS_MAX_QUERY_LENGTH": "2000",
+        "AIOPS_RATE_LIMIT_PER_MINUTE": "120",
+        "AIOPS_AUDIT_LOG_MAX_ENTRIES": "500",
+        "AIOPS_EVENT_STORE_MAX_ENTRIES": "200",
+        "AIOPS_SLO_TARGET": "99.5",
+        "AIOPS_SLO_WINDOW_MINUTES": "60",
+        "AIOPS_REFRESH_SECONDS": "30",
+        "AIOPS_HOST": "127.0.0.1",
+        "AIOPS_PORT": "5000",
+        "AIOPS_API_KEY": "k" * 24,
+        "AIOPS_ALLOWED_ORIGINS": "",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigurationError, match="required in production"):
+        Settings.from_env()
+
+    monkeypatch.setenv("AIOPS_PROMETHEUS_URL", "https://prometheus.example")
+    settings = Settings.from_env()
+    assert settings.production
+    assert settings.prometheus_url == "https://prometheus.example"
+
+
 def test_api_key_is_read_only_and_cannot_authorize_mutation():
     client = make_client(
         settings=make_settings(api_key="k" * 24, gateway_token=GATEWAY_TOKEN)
@@ -701,3 +735,92 @@ def test_template_does_not_render_source_data_as_html():
     assert "AIOPS_API_KEY" not in content
     assert "AIOPS_GATEWAY_TOKEN" not in content
     assert "credentials: 'same-origin'" in content
+
+
+def test_production_slo_uses_prometheus_aggregated_increase_across_workers():
+    class SummedPrometheus:
+        def __init__(self):
+            self.queries: list[str | None] = []
+            self.results = iter(([{"value": 198.0}], [{"value": 200.0}]))
+
+        def query(self, expression: str | None) -> list[dict[str, Any]]:
+            self.queries.append(expression)
+            return next(self.results)
+
+    prometheus = SummedPrometheus()
+    client = make_client(
+        settings=make_settings(
+            environment="production",
+            gateway_token=GATEWAY_TOKEN,
+            prometheus_url="https://prometheus.test",
+        ),
+        prometheus=prometheus,
+    )
+
+    response = client.get("/api/slo", headers=gateway_headers(READ_SCOPE))
+    snapshot = response.get_json()
+
+    assert response.status_code == 200
+    assert snapshot["source"] == "prometheus"
+    assert snapshot["aggregation_scope"].startswith("all instances")
+    assert snapshot["good_events"] == 198.0
+    assert snapshot["total_events"] == 200.0
+    assert snapshot["availability_percent"] == 99.0
+    assert len(prometheus.queries) == 2
+    assert all(
+        query.startswith("sum(increase(aiops_http_requests_total{")
+        for query in prometheus.queries
+    )
+    assert 'service="aiops-test"' in prometheus.queries[0]
+    assert 'scope="api"' in prometheus.queries[0]
+    assert 'status=~"2..|3.."' in prometheus.queries[0]
+    assert 'status=~"2..|3..|429|5.."' in prometheus.queries[1]
+    assert "[60m]" in prometheus.queries[0]
+
+
+def test_production_slo_fails_closed_when_shared_prometheus_is_unavailable():
+    client = make_client(
+        settings=make_settings(
+            environment="production",
+            gateway_token=GATEWAY_TOKEN,
+            prometheus_url="https://prometheus.test",
+        ),
+        prometheus=FakePrometheus(
+            error=IntegrationUnavailable("Prometheus unavailable")
+        ),
+    )
+
+    response = client.get("/api/slo", headers=gateway_headers(READ_SCOPE))
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "integration_unavailable"
+
+
+def test_development_slo_is_clearly_labeled_as_process_local():
+    response = make_client().get("/api/slo")
+    snapshot = response.get_json()
+
+    assert response.status_code == 200
+    assert snapshot["source"] == "process_local"
+    assert snapshot["measurement_state"] == "no_data"
+    assert snapshot["availability_percent"] is None
+
+
+def test_unmatched_api_paths_do_not_become_metric_labels():
+    client = make_client()
+    secret_path_segment = "customer-id-should-not-be-a-label"
+
+    response = client.get(f"/api/not-a-route/{secret_path_segment}")
+    method_not_allowed = client.post("/api/slo")
+    exposition = client.application.extensions["aiops"].metrics_registry.prometheus(
+        "aiops-test"
+    )
+    slo_snapshot = client.get("/api/slo").get_json()
+
+    assert response.status_code == 404
+    assert method_not_allowed.status_code == 405
+    assert secret_path_segment not in response.get_json()["error"]["message"]
+    assert secret_path_segment not in exposition
+    assert 'route="__unmatched__"' in exposition
+    assert slo_snapshot["measurement_state"] == "no_data"
+    assert slo_snapshot["excluded_client_errors"] == 2
