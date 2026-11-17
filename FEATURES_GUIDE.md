@@ -10,9 +10,9 @@ Read routes expose status, alerts, metrics, incidents, logs, insights, action st
 
 ## Integration boundaries
 
-Prometheus, Alertmanager, and model calls use typed clients in `src/platform/integrations.py`. Other operational JSON endpoints are called through shared request helpers in `web_dashboard.py`. Timeouts and TLS verification are configurable. The current client layer does not provide a common authentication contract for every upstream: Prometheus, Alertmanager, and generic JSON clients do not expose a general per-service credential setting.
+Prometheus and Alertmanager use typed clients in `src/platform/integrations.py`; deployment-owned JSON services use the shared request helper in `web_dashboard.py`. Each operational source has an independent optional `none`, Bearer, or Basic authentication policy, plus timeout and TLS-verification overrides. Secrets are injected through the environment/secret manager, excluded from settings representations, and rejected if embedded in configured URL userinfo or sensitive query parameters.
 
-Response validation is endpoint-specific. Do not assume every valid JSON payload is a valid integration response. Add a versioned schema, contract tests, and a deployment smoke test for each real service before relying on its route. Missing or unavailable upstream data must stay explicit; it must not be replaced with a plausible-looking fixture.
+Prometheus vectors, Alertmanager alerts/silences, and the outer JSON envelopes for incidents, logs, actions, insights, and thresholds are validated strictly. A malformed member rejects the whole upstream response; it is not silently filtered. Deployment-owned inner object fields remain deployment-defined and should be verified against the actual service. Missing configuration, timeout/network or HTTP failure, invalid JSON, and schema violations return `503 integration_unavailable`; the app never substitutes a plausible-looking fixture or stale sample. See [OPERATIONS.md](OPERATIONS.md#required-source-contracts) for the exact application contract.
 
 ## Health and observability
 

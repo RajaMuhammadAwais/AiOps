@@ -14,8 +14,12 @@ from werkzeug.test import Client
 from werkzeug.wrappers import Response
 
 import web_dashboard
-from src.platform.config import ConfigurationError, Settings
-from src.platform.integrations import IntegrationUnavailable
+from src.platform.config import ConfigurationError, Settings, UpstreamSettings
+from src.platform.integrations import (
+    AlertmanagerAdapter,
+    IntegrationUnavailable,
+    PrometheusAdapter,
+)
 from src.platform.security import (
     ALERT_SILENCE_SCOPE,
     READ_SCOPE,
@@ -90,22 +94,40 @@ class FakeModel:
 
 
 class FakeResponse:
-    def __init__(self, payload: Any, *, fail: bool = False):
+    def __init__(
+        self,
+        payload: Any,
+        *,
+        fail: bool = False,
+        json_error: Exception | None = None,
+    ):
         self.payload = payload
         self.fail = fail
+        self.json_error = json_error
 
     def raise_for_status(self) -> None:
         if self.fail:
-            raise RuntimeError("upstream failure")
+            raise requests.HTTPError("upstream failure")
 
     def json(self) -> Any:
+        if self.json_error:
+            raise self.json_error
         return self.payload
 
 
 class FakeHttp:
-    def __init__(self, payload: Any = None, *, error: Exception | None = None):
+    def __init__(
+        self,
+        payload: Any = None,
+        *,
+        error: Exception | None = None,
+        fail: bool = False,
+        json_error: Exception | None = None,
+    ):
         self.payload = {"accepted": True} if payload is None else payload
         self.error = error
+        self.fail = fail
+        self.json_error = json_error
         self.calls: list[dict[str, Any]] = []
 
     def request(
@@ -115,6 +137,8 @@ class FakeHttp:
         *,
         params: Mapping[str, Any] | None = None,
         json: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        auth: tuple[str, str] | None = None,
         timeout: int,
         verify: bool,
     ) -> FakeResponse:
@@ -124,13 +148,15 @@ class FakeHttp:
                 "url": url,
                 "params": params,
                 "json": json,
+                "headers": headers,
+                "auth": auth,
                 "timeout": timeout,
                 "verify": verify,
             }
         )
         if self.error:
             raise self.error
-        return FakeResponse(self.payload)
+        return FakeResponse(self.payload, fail=self.fail, json_error=self.json_error)
 
 
 def make_settings(**overrides: Any) -> Settings:
@@ -604,3 +630,706 @@ def test_template_does_not_render_source_data_as_html():
     assert "AIOPS_API_KEY" not in content
     assert "AIOPS_GATEWAY_TOKEN" not in content
     assert "credentials: 'same-origin'" in content
+
+
+class FakeRequestsSession:
+    def __init__(
+        self,
+        response: FakeResponse,
+        *,
+        error: Exception | None = None,
+    ):
+        self.response = response
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append({"method": "GET", "url": url, **kwargs})
+        if self.error:
+            raise self.error
+        return self.response
+
+    def post(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.calls.append({"method": "POST", "url": url, **kwargs})
+        if self.error:
+            raise self.error
+        return self.response
+
+
+def prometheus_vector(*samples: Any) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "data": {"resultType": "vector", "result": list(samples)},
+    }
+
+
+def valid_prometheus_sample() -> dict[str, Any]:
+    return {
+        "metric": {"__name__": "up", "job": "api"},
+        "value": [1710000000, "1"],
+    }
+
+
+def valid_alertmanager_alert() -> dict[str, Any]:
+    return {
+        "fingerprint": "fingerprint-1",
+        "labels": {"alertname": "CpuHigh", "severity": "warning"},
+        "annotations": {"summary": "CPU is high"},
+        "receivers": [{"name": "default"}],
+        "startsAt": "2030-01-01T00:00:00Z",
+        "updatedAt": "2030-01-01T00:00:00Z",
+        "endsAt": "2030-01-01T01:00:00Z",
+        "status": {
+            "state": "active",
+            "silencedBy": [],
+            "inhibitedBy": [],
+            "mutedBy": [],
+        },
+    }
+
+
+def test_upstream_env_configuration_is_independent_and_secrets_are_not_reprd(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    required = {
+        "AIOPS_ENV": "test",
+        "AIOPS_SERVICE_NAME": "aiops-test",
+        "AIOPS_VERSION": "test-version",
+        "AIOPS_LOG_LEVEL": "INFO",
+        "AIOPS_PROMETHEUS_TIMEOUT_SECONDS": "5",
+        "AIOPS_VERIFY_TLS": "true",
+        "AIOPS_MAX_QUERY_LENGTH": "2000",
+        "AIOPS_RATE_LIMIT_PER_MINUTE": "120",
+        "AIOPS_AUDIT_LOG_MAX_ENTRIES": "500",
+        "AIOPS_EVENT_STORE_MAX_ENTRIES": "200",
+        "AIOPS_SLO_TARGET": "99.5",
+        "AIOPS_SLO_WINDOW_MINUTES": "60",
+        "AIOPS_REFRESH_SECONDS": "30",
+        "AIOPS_HOST": "127.0.0.1",
+        "AIOPS_PORT": "5000",
+        "AIOPS_API_KEY": "",
+        "AIOPS_GATEWAY_TOKEN": "",
+        "AIOPS_ALLOWED_ORIGINS": "",
+    }
+    prefixes = {
+        "PROMETHEUS": "prometheus",
+        "ALERTMANAGER": "alertmanager",
+        "INCIDENTS": "incidents",
+        "LOGS": "logs",
+        "ACTIONS": "actions",
+        "INSIGHTS": "insights",
+        "THRESHOLDS": "thresholds",
+    }
+    for name, value in required.items():
+        monkeypatch.setenv(name, value)
+    for prefix in prefixes:
+        for suffix in (
+            "AUTH_TYPE",
+            "BEARER_TOKEN",
+            "USERNAME",
+            "PASSWORD",
+            "TIMEOUT_SECONDS",
+            "VERIFY_TLS",
+        ):
+            monkeypatch.delenv(f"AIOPS_{prefix}_{suffix}", raising=False)
+
+    monkeypatch.setenv("AIOPS_PROMETHEUS_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("AIOPS_PROMETHEUS_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("AIOPS_PROMETHEUS_BEARER_TOKEN", "prom-secret")
+    monkeypatch.setenv("AIOPS_ALERTMANAGER_AUTH_TYPE", "basic")
+    monkeypatch.setenv("AIOPS_ALERTMANAGER_USERNAME", "alert-user")
+    monkeypatch.setenv("AIOPS_ALERTMANAGER_PASSWORD", "alert-password")
+    monkeypatch.setenv("AIOPS_ALERTMANAGER_TIMEOUT_SECONDS", "9")
+    monkeypatch.setenv("AIOPS_ALERTMANAGER_VERIFY_TLS", "false")
+
+    settings = Settings.from_env()
+
+    assert settings.upstream("prometheus").headers == {
+        "Authorization": "Bearer prom-secret"
+    }
+    assert settings.upstream("alertmanager").basic_auth == (
+        "alert-user",
+        "alert-password",
+    )
+    assert settings.upstream("alertmanager").timeout_seconds == 9
+    assert settings.upstream("alertmanager").verify_tls is False
+    assert settings.upstream("incidents").timeout_seconds == 5
+    assert all(
+        settings.upstream(name).auth_type == "none"
+        for name in ("incidents", "logs", "actions", "insights", "thresholds")
+    )
+    assert "prom-secret" not in repr(settings)
+    assert "alert-password" not in repr(settings)
+
+    monkeypatch.setenv(
+        "AIOPS_INCIDENTS_URL", "https://user:password@incidents.test/api"
+    )
+    with pytest.raises(ConfigurationError, match="URL credentials"):
+        Settings.from_env()
+    monkeypatch.setenv(
+        "AIOPS_INCIDENTS_URL", "https://incidents.test/api?api_key=secret"
+    )
+    with pytest.raises(ConfigurationError, match="credentials in its query"):
+        Settings.from_env()
+
+
+def test_upstream_credentials_cannot_be_silently_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AIOPS_ENV", "test")
+    monkeypatch.setenv("AIOPS_SERVICE_NAME", "aiops-test")
+    monkeypatch.setenv("AIOPS_VERSION", "test-version")
+    monkeypatch.setenv("AIOPS_LOG_LEVEL", "INFO")
+    monkeypatch.setenv("AIOPS_PROMETHEUS_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("AIOPS_VERIFY_TLS", "true")
+    monkeypatch.setenv("AIOPS_MAX_QUERY_LENGTH", "2000")
+    monkeypatch.setenv("AIOPS_RATE_LIMIT_PER_MINUTE", "120")
+    monkeypatch.setenv("AIOPS_AUDIT_LOG_MAX_ENTRIES", "500")
+    monkeypatch.setenv("AIOPS_EVENT_STORE_MAX_ENTRIES", "200")
+    monkeypatch.setenv("AIOPS_SLO_TARGET", "99.5")
+    monkeypatch.setenv("AIOPS_SLO_WINDOW_MINUTES", "60")
+    monkeypatch.setenv("AIOPS_REFRESH_SECONDS", "30")
+    monkeypatch.setenv("AIOPS_HOST", "127.0.0.1")
+    monkeypatch.setenv("AIOPS_PORT", "5000")
+    monkeypatch.setenv("AIOPS_API_KEY", "")
+    monkeypatch.setenv("AIOPS_ALLOWED_ORIGINS", "")
+    monkeypatch.setenv("AIOPS_INCIDENTS_BEARER_TOKEN", "unused-secret")
+    monkeypatch.setenv("AIOPS_INCIDENTS_AUTH_TYPE", "none")
+
+    with pytest.raises(ConfigurationError, match="credentials require"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"timeout_seconds": 0, "verify_tls": True},
+        {"timeout_seconds": 61, "verify_tls": True},
+        {"timeout_seconds": 5, "verify_tls": True, "auth_type": "digest"},
+        {"timeout_seconds": 5, "verify_tls": True, "auth_type": "bearer"},
+        {
+            "timeout_seconds": 5,
+            "verify_tls": True,
+            "auth_type": "none",
+            "bearer_token": "unexpected-secret",
+        },
+        {
+            "timeout_seconds": 5,
+            "verify_tls": True,
+            "auth_type": "basic",
+            "username": "user",
+        },
+    ],
+)
+def test_direct_upstream_settings_reject_invalid_request_policies(
+    settings: dict[str, Any],
+):
+    with pytest.raises(ConfigurationError):
+        UpstreamSettings(**settings)
+
+
+def test_prometheus_contract_normalizes_samples_and_applies_auth_policy(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    secret = "prometheus-test-secret"
+    session = FakeRequestsSession(
+        FakeResponse(prometheus_vector(valid_prometheus_sample()))
+    )
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    settings = make_settings(
+        prometheus_url="https://prometheus.test",
+        upstream_configs={
+            "prometheus": UpstreamSettings(7, True, "bearer", bearer_token=secret)
+        },
+    )
+
+    result = PrometheusAdapter(settings).query("up")
+
+    assert result == [
+        {
+            "name": "up",
+            "value": 1.0,
+            "timestamp": 1710000000.0,
+            "labels": {"job": "api"},
+        }
+    ]
+    assert session.calls[0]["params"] == {"query": "up"}
+    assert session.calls[0]["headers"] == {"Authorization": f"Bearer {secret}"}
+    assert session.calls[0]["timeout"] == 7
+    assert session.calls[0]["verify"] is True
+    assert secret not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        [],
+        {"status": "error"},
+        {"status": "success", "data": {}},
+        {"status": "success", "data": {"resultType": "matrix", "result": []}},
+        prometheus_vector(valid_prometheus_sample(), None),
+        prometheus_vector({"metric": {}, "value": [1, "NaN"]}),
+        prometheus_vector({"metric": {"job": 3}, "value": [1, "1"]}),
+        prometheus_vector({"metric": {}, "value": ["1710000000", "1"]}),
+        prometheus_vector({"metric": {}, "value": [1710000000, 1]}),
+    ],
+)
+def test_prometheus_contract_rejects_malformed_or_partial_samples(
+    monkeypatch: pytest.MonkeyPatch, payload: Any
+):
+    session = FakeRequestsSession(FakeResponse(payload))
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    adapter = PrometheusAdapter(make_settings(prometheus_url="https://prometheus.test"))
+
+    with pytest.raises(IntegrationUnavailable):
+        adapter.query("up")
+
+
+@pytest.mark.parametrize("failure", ["valid", "malformed", "timeout", "http", "json"])
+def test_prometheus_transport_failures_are_sanitized_and_consistent(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+):
+    secret = "prometheus-secret"
+    response = FakeResponse(
+        prometheus_vector(
+            None if failure == "malformed" else valid_prometheus_sample()
+        ),
+        fail=failure == "http",
+        json_error=ValueError(secret) if failure == "json" else None,
+    )
+    session = FakeRequestsSession(
+        response,
+        error=requests.Timeout(secret) if failure == "timeout" else None,
+    )
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    settings = make_settings(
+        prometheus_url="https://prometheus.test",
+        status_query="up",
+        upstream_configs={
+            "prometheus": UpstreamSettings(5, True, "bearer", bearer_token=secret)
+        },
+    )
+    client = make_client(settings=settings)
+
+    result = client.get("/api/status")
+
+    if failure == "valid":
+        assert result.status_code == 200
+        assert result.get_json()["samples"][0]["name"] == "up"
+        assert result.get_json()["source"] == "prometheus"
+    else:
+        assert result.status_code == 503
+        assert result.get_json()["error"]["code"] == "integration_unavailable"
+    assert secret not in result.get_data(as_text=True)
+
+
+def test_readiness_logs_do_not_emit_chained_upstream_credentials(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    secret = "readiness-upstream-secret"
+    session = FakeRequestsSession(
+        FakeResponse({}), error=requests.Timeout(f"Bearer {secret}")
+    )
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    client = make_client(
+        settings=make_settings(
+            prometheus_url="https://prometheus.test",
+            alertmanager_url="https://alertmanager.test",
+            status_query="up",
+        )
+    )
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert secret not in caplog.text
+
+
+def test_alertmanager_contract_validates_alert_and_applies_basic_auth(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = FakeRequestsSession(
+        FakeResponse(
+            [
+                valid_alertmanager_alert(),
+                {**valid_alertmanager_alert(), "fingerprint": "fp-2"},
+            ]
+        )
+    )
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    settings = make_settings(
+        alertmanager_url="https://alertmanager.test",
+        upstream_configs={
+            "alertmanager": UpstreamSettings(
+                8, False, "basic", username="alert-user", password="alert-pass"
+            )
+        },
+    )
+
+    alerts = AlertmanagerAdapter(settings).active_alerts()
+
+    assert len(alerts) == 2
+    assert alerts[0]["id"] == "fingerprint-1"
+    assert alerts[0]["name"] == "CpuHigh"
+    assert alerts[0]["status"] == "active"
+    assert session.calls[0]["params"] == {
+        "active": "true",
+        "silenced": "false",
+        "inhibited": "false",
+    }
+    assert session.calls[0]["auth"] == ("alert-user", "alert-pass")
+    assert session.calls[0]["timeout"] == 8
+    assert session.calls[0]["verify"] is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        [None],
+        [{**valid_alertmanager_alert(), "fingerprint": ""}],
+        [{**valid_alertmanager_alert(), "labels": {"alertname": 7}}],
+        [{**valid_alertmanager_alert(), "annotations": None}],
+        [{**valid_alertmanager_alert(), "status": None}],
+        [
+            {
+                key: value
+                for key, value in valid_alertmanager_alert().items()
+                if key != "startsAt"
+            }
+        ],
+        [
+            {
+                key: value
+                for key, value in valid_alertmanager_alert().items()
+                if key != "updatedAt"
+            }
+        ],
+        [
+            {
+                key: value
+                for key, value in valid_alertmanager_alert().items()
+                if key != "endsAt"
+            }
+        ],
+        [{**valid_alertmanager_alert(), "startsAt": "not-a-timestamp"}],
+        [{**valid_alertmanager_alert(), "receivers": [None]}],
+        [
+            {
+                **valid_alertmanager_alert(),
+                "status": {
+                    **valid_alertmanager_alert()["status"],
+                    "state": "unknown",
+                },
+            }
+        ],
+        [
+            {
+                **valid_alertmanager_alert(),
+                "status": {
+                    key: value
+                    for key, value in valid_alertmanager_alert()["status"].items()
+                    if key != "mutedBy"
+                },
+            }
+        ],
+        [{**valid_alertmanager_alert(), "labels": {"severity": "warning"}}],
+    ],
+)
+def test_alertmanager_contract_rejects_malformed_alerts(
+    monkeypatch: pytest.MonkeyPatch, payload: Any
+):
+    session = FakeRequestsSession(FakeResponse(payload))
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    adapter = AlertmanagerAdapter(
+        make_settings(alertmanager_url="https://alertmanager.test")
+    )
+
+    with pytest.raises(IntegrationUnavailable):
+        adapter.active_alerts()
+
+
+def test_alertmanager_silence_response_requires_an_identifier(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = FakeRequestsSession(FakeResponse({"silenceID": 12}))
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    adapter = AlertmanagerAdapter(
+        make_settings(alertmanager_url="https://alertmanager.test")
+    )
+
+    with pytest.raises(IntegrationUnavailable):
+        adapter.create_silence([], 5, "maintenance", "operator-1")
+
+
+def test_alertmanager_silence_contract_posts_expected_fields_and_returns_id(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = FakeRequestsSession(FakeResponse({"silenceID": "silence-42"}))
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    adapter = AlertmanagerAdapter(
+        make_settings(alertmanager_url="https://alertmanager.test")
+    )
+
+    result = adapter.create_silence(
+        [{"name": "fingerprint", "value": "fp-1", "isRegex": False}],
+        15,
+        "maintenance window",
+        "operator-1",
+    )
+
+    assert result["silence_id"] == "silence-42"
+    assert session.calls[0]["method"] == "POST"
+    assert session.calls[0]["url"] == "https://alertmanager.test/api/v2/silences"
+    assert set(session.calls[0]["json"]) == {
+        "matchers",
+        "startsAt",
+        "endsAt",
+        "createdBy",
+        "comment",
+    }
+    assert session.calls[0]["json"]["createdBy"] == "operator-1"
+    assert session.calls[0]["json"]["comment"] == "maintenance window"
+
+
+@pytest.mark.parametrize("failure", ["valid", "malformed", "timeout", "http", "json"])
+def test_alertmanager_route_maps_contract_and_transport_failures_to_503(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+):
+    payload = (
+        [valid_alertmanager_alert(), None]
+        if failure == "malformed"
+        else [valid_alertmanager_alert()]
+    )
+    session = FakeRequestsSession(
+        FakeResponse(
+            payload,
+            fail=failure == "http",
+            json_error=ValueError("invalid JSON") if failure == "json" else None,
+        ),
+        error=requests.Timeout("upstream timeout") if failure == "timeout" else None,
+    )
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    client = make_client(
+        settings=make_settings(alertmanager_url="https://alertmanager.test")
+    )
+
+    response = client.get("/api/alerts")
+
+    if failure == "valid":
+        assert response.status_code == 200
+        assert response.get_json()["alerts"][0]["id"] == "fingerprint-1"
+        assert response.get_json()["source"] == "alertmanager"
+    else:
+        assert response.status_code == 503
+        assert response.get_json()["error"]["code"] == "integration_unavailable"
+
+
+@pytest.mark.parametrize(
+    "path,settings_overrides",
+    [
+        ("/api/status", {"status_query": "up"}),
+        ("/api/alerts", {}),
+    ],
+)
+def test_missing_typed_upstream_route_returns_503(
+    path: str, settings_overrides: dict[str, Any]
+):
+    client = make_client(settings=make_settings(**settings_overrides))
+
+    response = client.get(path)
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "integration_unavailable"
+
+
+GENERIC_UPSTREAM_CASES = [
+    (
+        "incidents",
+        "incidents_url",
+        "/api/incidents",
+        "GET",
+        {"incidents": []},
+        {"incidents": [{"id": "i-1"}, None]},
+    ),
+    (
+        "logs",
+        "logs_url",
+        "/api/log-events",
+        "GET",
+        {"log_events": []},
+        {"log_events": ["not-an-object"]},
+    ),
+    ("actions", "actions_url", "/api/self-healing", "GET", {"actions": []}, []),
+    (
+        "insights",
+        "insights_url",
+        "/api/ai-recommendations",
+        "GET",
+        {"items": []},
+        ["not-an-object"],
+    ),
+    (
+        "thresholds",
+        "thresholds_url",
+        "/api/set-thresholds",
+        "POST",
+        {"updated": True},
+        [],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "upstream,url_field,path,method,valid,malformed", GENERIC_UPSTREAM_CASES
+)
+@pytest.mark.parametrize("failure", ["valid", "malformed", "timeout", "http", "json"])
+def test_generic_upstream_contract_matrix_maps_to_valid_response_or_503(
+    upstream: str,
+    url_field: str,
+    path: str,
+    method: str,
+    valid: Any,
+    malformed: Any,
+    failure: str,
+):
+    settings = make_settings(
+        **{url_field: "https://upstream.test"},
+        gateway_token=GATEWAY_TOKEN if method == "POST" else None,
+    )
+    request_payload = {"cpu": 80, "mem": 85, "disk": 90} if method == "POST" else None
+    if failure == "valid":
+        fake_http = FakeHttp(valid)
+    elif failure == "malformed":
+        fake_http = FakeHttp(malformed)
+    elif failure == "timeout":
+        fake_http = FakeHttp(error=requests.Timeout("upstream timeout"))
+    elif failure == "http":
+        fake_http = FakeHttp(fail=True)
+    else:
+        fake_http = FakeHttp(json_error=ValueError("invalid JSON"))
+    client = make_client(settings=settings, http=fake_http)
+
+    if method == "POST":
+        response = client.post(
+            path,
+            json=request_payload,
+            headers=gateway_headers(THRESHOLDS_WRITE_SCOPE),
+        )
+    else:
+        response = client.get(path)
+
+    expected_status = 200 if failure == "valid" else 503
+    assert response.status_code == expected_status
+    if expected_status == 503:
+        assert response.get_json()["error"]["code"] == "integration_unavailable"
+    else:
+        result = response.get_json()
+        if upstream in {"incidents", "logs"}:
+            key = "incidents" if upstream == "incidents" else "log_events"
+            assert result[key] == valid[key]
+            assert result["source"] == upstream
+        else:
+            assert result == valid
+        assert fake_http.calls[0]["timeout"] == 5
+        assert fake_http.calls[0]["verify"] is True
+        assert fake_http.calls[0]["method"] == method
+        if upstream == "insights":
+            assert fake_http.calls[0]["params"] == {"kind": "recommendations"}
+        if method == "POST":
+            assert fake_http.calls[0]["json"] == request_payload
+
+
+@pytest.mark.parametrize(
+    "upstream,url_field,path,method,valid,malformed", GENERIC_UPSTREAM_CASES
+)
+def test_missing_generic_upstream_is_503_not_an_empty_success(
+    upstream: str,
+    url_field: str,
+    path: str,
+    method: str,
+    valid: Any,
+    malformed: Any,
+):
+    settings = make_settings(gateway_token=GATEWAY_TOKEN if method == "POST" else None)
+    http = FakeHttp(valid)
+    client = make_client(settings=settings, http=http)
+    if method == "POST":
+        response = client.post(
+            path,
+            json={"cpu": 80, "mem": 85, "disk": 90},
+            headers=gateway_headers(THRESHOLDS_WRITE_SCOPE),
+        )
+    else:
+        response = client.get(path)
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "integration_unavailable"
+    assert http.calls == []
+
+
+def test_per_upstream_credentials_are_used_and_never_returned_on_error():
+    secret = "incidents-super-secret"
+    settings = make_settings(
+        incidents_url="https://incidents.test/api",
+        upstream_configs={
+            "incidents": UpstreamSettings(11, True, "bearer", bearer_token=secret)
+        },
+    )
+    http = FakeHttp(error=requests.HTTPError(f"rejected Bearer {secret}"))
+    client = make_client(settings=settings, http=http)
+
+    response = client.get("/api/incidents")
+
+    assert response.status_code == 503
+    assert secret not in response.get_data(as_text=True)
+    assert http.calls[0]["headers"] == {"Authorization": f"Bearer {secret}"}
+    assert http.calls[0]["timeout"] == 11
+    assert http.calls[0]["verify"] is True
+
+
+def test_unexpected_upstream_errors_are_not_logged_or_returned(
+    caplog: pytest.LogCaptureFixture,
+):
+    secret = "unexpected-upstream-secret"
+    client = make_client(
+        settings=make_settings(incidents_url="https://incidents.test/api"),
+        http=FakeHttp(error=RuntimeError(f"Bearer {secret}")),
+    )
+
+    response = client.get("/api/incidents")
+
+    assert response.status_code == 500
+    assert secret not in response.get_data(as_text=True)
+    assert secret not in caplog.text
+
+
+def test_configured_source_url_is_not_returned_by_api():
+    source_url = "https://incidents.test/api/private-token-path"
+    settings = make_settings(incidents_url=source_url)
+    assert "private-token-path" not in repr(settings)
+    client = make_client(
+        settings=settings,
+        http=FakeHttp({"incidents": []}),
+    )
+
+    response = client.get("/api/incidents")
+
+    assert response.status_code == 200
+    assert response.get_json()["source"] == "incidents"
+    assert source_url not in response.get_data(as_text=True)
+
+
+def test_invalid_generic_json_number_is_not_returned_or_cached_as_success():
+    settings = make_settings(incidents_url="https://incidents.test/api")
+    http = FakeHttp({"incidents": [{"id": "fresh"}]})
+    client = make_client(settings=settings, http=http)
+    first = client.get("/api/incidents")
+    http.payload = {"incidents": [{"id": "invalid", "value": float("nan")}]}
+
+    second = client.get("/api/incidents")
+
+    assert first.status_code == 200
+    assert second.status_code == 503
+    assert second.get_json()["error"]["code"] == "integration_unavailable"

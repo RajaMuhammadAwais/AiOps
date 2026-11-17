@@ -52,21 +52,18 @@ The service creates no upstream system and does not seed local records. The inst
 
 The following values are deployment-supplied. URLs are treated as upstream service endpoints; secrets must come from a secret manager or injected environment, never from committed files.
 
-| Capability | Required upstream configuration | Expected response or behavior |
+| Integration | Request | Accepted response contract |
 |---|---|---|
-| Readiness and status | `AIOPS_PROMETHEUS_URL`, `AIOPS_STATUS_QUERY`, `AIOPS_ALERTMANAGER_URL` | Prometheus must return a successful `/api/v1/query` response with `data.result`; Alertmanager must return a JSON list from `/api/v2/alerts`. |
-| Metrics | `AIOPS_PROMETHEUS_URL`, `AIOPS_METRICS_QUERY` | The adapter normalizes Prometheus samples into metric name, numeric value, timestamp, and labels. |
-| Anomalies | `AIOPS_ANOMALIES_QUERY` with Prometheus configured | The expression is queried through the same Prometheus adapter. |
-| Active alerts | `AIOPS_ALERTMANAGER_URL` | The adapter reads active, non-silenced, non-inhibited alerts from `/api/v2/alerts`. |
-| Alert suppression | `AIOPS_ALERTMANAGER_URL` | The service validates the alert and duration, then creates a silence through `/api/v2/silences`. |
-| Incidents | `AIOPS_INCIDENTS_URL` | The endpoint must return an object containing an `incidents` list. |
-| Logs | `AIOPS_LOGS_URL` | The endpoint must return an object containing a `log_events` list. |
-| Actions and remediation state | `AIOPS_ACTIONS_URL` | The endpoint must return a JSON object. AiOps does not execute arbitrary local commands. |
-| Insights and RCA | `AIOPS_INSIGHTS_URL` | The endpoint is queried with `?kind=recommendations`, `?kind=rca`, or `?kind=ml`. |
-| Threshold persistence | `AIOPS_THRESHOLDS_URL` | The service accepts exactly `cpu`, `mem`, and `disk`, each as a number greater than `0` and less than `100`, then sends the object to the configured service. |
-| Assistant | `AIOPS_LLM_URL`, `AIOPS_LLM_MODEL`, optional `AIOPS_LLM_API_KEY` | The endpoint must return either `choices[0].message.content` or a non-empty `output_text` string. |
+| Prometheus | `GET /api/v1/query?query=<PromQL>` using `AIOPS_STATUS_QUERY`, `AIOPS_METRICS_QUERY`, or `AIOPS_ANOMALIES_QUERY`. | Successful instant-vector response: `status: "success"`, `data.resultType: "vector"`, and `data.result` list. Each sample requires a string-label `metric` object and `[finite numeric timestamp, finite decimal-string value]`; empty vectors are valid. |
+| Alertmanager | `GET /api/v2/alerts` with active/non-silenced/non-inhibited filters; `POST /api/v2/silences` with matchers and start/end/creator/comment fields. | Each alert requires a non-empty fingerprint, label and annotation string maps, receiver objects, timezone-aware `startsAt`/`updatedAt`/`endsAt`, and a valid `status` state plus `silencedBy`, `inhibitedBy`, and `mutedBy` string lists. Silence creation requires a non-empty string `silenceID` response property. |
+| Incidents / logs | `GET` the configured `AIOPS_INCIDENTS_URL` or `AIOPS_LOGS_URL`. | JSON envelope `{ "incidents": [object, ...] }` or `{ "log_events": [object, ...] }`; each list member must be an object. Item fields are deployment-owned. |
+| Actions / insights | `GET` the configured URL; insights include `kind=recommendations`, `kind=rca`, or `kind=ml`. | JSON object. Nested fields are deployment-owned; no local command is executed. |
+| Threshold persistence | `POST` to `AIOPS_THRESHOLDS_URL` with exactly `cpu`, `mem`, and `disk`, each a finite number strictly between `0` and `100`. | Successful response must be a JSON object. |
+| Assistant | `AIOPS_LLM_URL`, `AIOPS_LLM_MODEL`, optional `AIOPS_LLM_API_KEY`. | JSON object containing either non-empty `choices[0].message.content` or non-empty `output_text`. |
 
-A missing integration affects only the routes that depend on it. The service returns a structured `503` error instead of substituting an empty or synthetic success response.
+For each operational upstream, `AIOPS_<UPSTREAM>_AUTH_TYPE` supports `none` (default), `bearer`, or `basic`; Bearer uses `AIOPS_<UPSTREAM>_BEARER_TOKEN`, and Basic uses both `_USERNAME` and `_PASSWORD`. Supported prefixes are `PROMETHEUS`, `ALERTMANAGER`, `INCIDENTS`, `LOGS`, `ACTIONS`, `INSIGHTS`, and `THRESHOLDS`. Per-source `_TIMEOUT_SECONDS` and `_VERIFY_TLS` override the legacy shared timeout/TLS settings. Keep TLS verification enabled in production and inject credentials from a secret manager/environment; do not put credentials in URLs, committed files, logs, or browser code. The model uses its existing optional Bearer key and shared network defaults.
+
+Missing configuration, timeout/network failure, upstream HTTP/auth failure, invalid JSON, or a schema violation maps to a structured `503 integration_unavailable` response. Empty valid lists remain empty; malformed records are rejected rather than filtered. Failed refreshes never substitute synthetic data or return old cached samples as current. The full request, response, auth, timeout, TLS, and failure contract is in [OPERATIONS.md](OPERATIONS.md#required-source-contracts).
 
 ## Requirements
 
@@ -291,7 +288,7 @@ The service is intentionally conservative around missing or untrusted inputs.
 |---|---|
 | Missing required configuration | Process startup fails with a configuration error. |
 | Missing required readiness integration | `/health/ready` returns `503` with the missing setting names. |
-| Upstream failure or malformed response | Routes return `503 integration_unavailable` where the adapter/route maps that failure; schema validation is endpoint-specific, not uniform. See [ARCHITECTURE.md](ARCHITECTURE.md). |
+| Upstream timeout/network or HTTP failure, invalid JSON, or contract violation | Dependent routes return the same structured `503 integration_unavailable` response; upstream body, URL credentials, and raw exception text are not echoed. See [OPERATIONS.md](OPERATIONS.md#required-source-contracts). |
 | Invalid JSON body or field type | Route returns `400 invalid_request`. |
 | Missing or incorrect API key or trusted gateway assertion when authentication is enabled | Route returns `401 authentication_required`. |
 | Authenticated principal lacks the exact scope for the route | Route returns `403 forbidden`. |

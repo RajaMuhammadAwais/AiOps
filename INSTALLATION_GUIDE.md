@@ -34,7 +34,7 @@ The identity, bind, logging, TLS, request-limit, audit-capacity, event-capacity,
 
 At least one of `AIOPS_PROMETHEUS_URL` or `AIOPS_ALERTMANAGER_URL` must be configured for operational readiness. `AIOPS_VERIFY_TLS`, `AIOPS_PROMETHEUS_TIMEOUT_SECONDS`, `AIOPS_MAX_QUERY_LENGTH`, `AIOPS_RATE_LIMIT_PER_MINUTE`, `AIOPS_AUDIT_LOG_MAX_ENTRIES`, `AIOPS_EVENT_STORE_MAX_ENTRIES`, `AIOPS_SLO_TARGET`, `AIOPS_SLO_WINDOW_MINUTES`, `AIOPS_REFRESH_SECONDS`, and `AIOPS_LOG_LEVEL` must be supplied explicitly and are range-checked. Production also requires an `AIOPS_API_KEY` with sufficient entropy.
 
-Optional service endpoints are configured through `AIOPS_INCIDENTS_URL`, `AIOPS_LOGS_URL`, `AIOPS_ACTIONS_URL`, `AIOPS_INSIGHTS_URL`, `AIOPS_THRESHOLDS_URL`, and `AIOPS_LLM_URL`. The model adapter additionally accepts `AIOPS_LLM_API_KEY` and `AIOPS_LLM_MODEL`. A missing optional integration makes only its dependent capability unavailable; it never produces a substitute response.
+Optional service endpoints are configured through `AIOPS_INCIDENTS_URL`, `AIOPS_LOGS_URL`, `AIOPS_ACTIONS_URL`, `AIOPS_INSIGHTS_URL`, `AIOPS_THRESHOLDS_URL`, and `AIOPS_LLM_URL`. Operational upstreams may independently select `none`, Bearer, or Basic auth and override timeout/TLS behavior using their `AIOPS_<UPSTREAM>_*` variables; credentials belong in a secret manager or injected environment, never in a URL or committed file. The model adapter accepts `AIOPS_LLM_API_KEY` and `AIOPS_LLM_MODEL`. A missing optional integration makes only its dependent capability unavailable; it never produces a substitute response. See [OPERATIONS.md](OPERATIONS.md#required-source-contracts) for schemas and failure mapping.
 
 ## Configuration validation
 

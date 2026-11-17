@@ -1,22 +1,51 @@
 """Adapters for external operational systems.
 
-The adapters fail explicitly when a source is not configured or returns an
-invalid response. They never manufacture telemetry, incidents, or model output.
+The adapters implement the response contracts documented in OPERATIONS.md.
+They fail explicitly on unavailable or malformed upstream data and never
+manufacture telemetry, incidents, or model output.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import math
 from typing import Any, Mapping, cast
 
 import requests
 
 from .config import Settings
-from .security import fingerprint
 
 
 class IntegrationUnavailable(RuntimeError):
     """Raised when an external source cannot provide trustworthy data."""
+
+
+def _finite_number(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise IntegrationUnavailable(f"Prometheus {label} was not numeric")
+    try:
+        parsed = float(value)
+    except (ValueError, OverflowError) as exc:
+        raise IntegrationUnavailable(f"Prometheus {label} was not numeric") from exc
+    if not math.isfinite(parsed):
+        raise IntegrationUnavailable(f"Prometheus {label} was not finite")
+    return parsed
+
+
+def _required_datetime(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise IntegrationUnavailable(f"Alertmanager alert is missing {label}")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise IntegrationUnavailable(
+            f"Alertmanager alert has an invalid {label} timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise IntegrationUnavailable(
+            f"Alertmanager alert has an invalid {label} timestamp"
+        )
+    return value
 
 
 class PrometheusAdapter:
@@ -32,46 +61,57 @@ class PrometheusAdapter:
                 "The requested Prometheus query is not configured"
             )
         url = self.settings.prometheus_url.rstrip("/") + "/api/v1/query"
+        upstream = self.settings.upstream("prometheus")
         try:
             response = self.session.get(
                 url,
                 params={"query": expression},
-                timeout=self.settings.prometheus_timeout_seconds,
-                verify=self.settings.verify_tls,
+                headers=upstream.headers,
+                auth=upstream.basic_auth,
+                timeout=upstream.timeout_seconds,
+                verify=upstream.verify_tls,
             )
             response.raise_for_status()
             payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise IntegrationUnavailable(f"Prometheus query failed: {exc}") from exc
-        if payload.get("status") != "success":
+        except (requests.RequestException, ValueError, RecursionError) as exc:
+            raise IntegrationUnavailable("Prometheus request failed") from exc
+        if not isinstance(payload, Mapping) or payload.get("status") != "success":
             raise IntegrationUnavailable("Prometheus returned an unsuccessful response")
-        result = payload.get("data", {}).get("result")
-        if not isinstance(result, list):
+        data = payload.get("data")
+        if not isinstance(data, Mapping) or data.get("resultType") != "vector":
             raise IntegrationUnavailable(
-                "Prometheus response did not contain a result vector"
+                "Prometheus response was not an instant vector"
             )
-        return [self._normalize(item) for item in result if isinstance(item, dict)]
+        result = data.get("result")
+        if not isinstance(result, list) or any(
+            not isinstance(item, Mapping) for item in result
+        ):
+            raise IntegrationUnavailable(
+                "Prometheus response did not contain valid vector samples"
+            )
+        return [self._normalize(item) for item in result]
 
-    def _normalize(self, item: Mapping[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _normalize(item: Mapping[str, Any]) -> dict[str, Any]:
         metric = item.get("metric")
         value = item.get("value")
-        if (
-            not isinstance(metric, Mapping)
-            or not isinstance(value, list)
-            or len(value) != 2
+        if not isinstance(metric, Mapping) or any(
+            not isinstance(key, str) or not isinstance(label, str)
+            for key, label in metric.items()
         ):
+            raise IntegrationUnavailable("Prometheus returned malformed labels")
+        if not isinstance(value, list) or len(value) != 2:
             raise IntegrationUnavailable("Prometheus returned a malformed sample")
-        try:
-            timestamp = float(value[0])
-            numeric_value = float(value[1])
-        except (TypeError, ValueError) as exc:
-            raise IntegrationUnavailable(
-                "Prometheus returned a non-numeric sample"
-            ) from exc
-        name = str(metric.get("__name__", "unknown"))
-        labels = {
-            str(key): str(val) for key, val in metric.items() if key != "__name__"
-        }
+        if isinstance(value[0], bool) or not isinstance(value[0], (int, float)):
+            raise IntegrationUnavailable("Prometheus timestamp was not numeric")
+        if not isinstance(value[1], str):
+            raise IntegrationUnavailable("Prometheus sample was not a string")
+        timestamp = _finite_number(value[0], "timestamp")
+        numeric_value = _finite_number(value[1], "sample")
+        name = metric.get("__name__", "")
+        if not isinstance(name, str):
+            raise IntegrationUnavailable("Prometheus returned a malformed metric name")
+        labels = {key: val for key, val in metric.items() if key != "__name__"}
         return {
             "name": name,
             "value": numeric_value,
@@ -89,20 +129,27 @@ class AlertmanagerAdapter:
         if not self.settings.alertmanager_url:
             raise IntegrationUnavailable("Alertmanager is not configured")
         url = self.settings.alertmanager_url.rstrip("/") + "/api/v2/alerts"
+        upstream = self.settings.upstream("alertmanager")
         try:
             response = self.session.get(
                 url,
                 params={"active": "true", "silenced": "false", "inhibited": "false"},
-                timeout=self.settings.prometheus_timeout_seconds,
-                verify=self.settings.verify_tls,
+                headers=upstream.headers,
+                auth=upstream.basic_auth,
+                timeout=upstream.timeout_seconds,
+                verify=upstream.verify_tls,
             )
             response.raise_for_status()
             payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise IntegrationUnavailable(f"Alertmanager request failed: {exc}") from exc
-        if not isinstance(payload, list):
-            raise IntegrationUnavailable("Alertmanager response was not a list")
-        return [self._normalize(item) for item in payload if isinstance(item, dict)]
+        except (requests.RequestException, ValueError, RecursionError) as exc:
+            raise IntegrationUnavailable("Alertmanager request failed") from exc
+        if not isinstance(payload, list) or any(
+            not isinstance(item, Mapping) for item in payload
+        ):
+            raise IntegrationUnavailable(
+                "Alertmanager response was not a valid alert list"
+            )
+        return [self._normalize(item) for item in payload]
 
     def create_silence(
         self,
@@ -122,51 +169,83 @@ class AlertmanagerAdapter:
             "comment": comment,
         }
         url = self.settings.alertmanager_url.rstrip("/") + "/api/v2/silences"
+        upstream = self.settings.upstream("alertmanager")
         try:
             response = self.session.post(
                 url,
                 json=cast(Any, payload),
-                timeout=self.settings.prometheus_timeout_seconds,
-                verify=self.settings.verify_tls,
+                headers=upstream.headers,
+                auth=upstream.basic_auth,
+                timeout=upstream.timeout_seconds,
+                verify=upstream.verify_tls,
             )
             response.raise_for_status()
             result = response.json()
-        except (requests.RequestException, ValueError) as exc:
+        except (requests.RequestException, ValueError, RecursionError) as exc:
+            raise IntegrationUnavailable("Alertmanager silence request failed") from exc
+        if (
+            not isinstance(result, Mapping)
+            or not isinstance(result.get("silenceID"), str)
+            or not result.get("silenceID", "").strip()
+        ):
             raise IntegrationUnavailable(
-                f"Alertmanager silence request failed: {exc}"
-            ) from exc
-        if not isinstance(result, Mapping) or not result.get("silenceId"):
-            raise IntegrationUnavailable(
-                "Alertmanager did not return a silence identifier"
+                "Alertmanager did not return a valid silence identifier"
             )
-        return {"silence_id": result["silenceId"], "ends_at": payload["endsAt"]}
+        return {"silence_id": result["silenceID"], "ends_at": payload["endsAt"]}
 
     @staticmethod
     def _normalize(item: Mapping[str, Any]) -> dict[str, Any]:
-        raw_labels = item.get("labels")
-        labels: Mapping[str, Any] = (
-            raw_labels if isinstance(raw_labels, Mapping) else {}
-        )
-        raw_annotations = item.get("annotations")
-        annotations: Mapping[str, Any] = (
-            raw_annotations if isinstance(raw_annotations, Mapping) else {}
-        )
-        starts_at = item.get("startsAt") or item.get("updatedAt")
+        fingerprint = item.get("fingerprint")
+        labels = item.get("labels")
+        annotations = item.get("annotations")
+        receivers = item.get("receivers")
+        status = item.get("status")
+        starts_at = _required_datetime(item.get("startsAt"), "startsAt")
+        _required_datetime(item.get("updatedAt"), "updatedAt")
+        _required_datetime(item.get("endsAt"), "endsAt")
+        if not isinstance(fingerprint, str) or not fingerprint.strip():
+            raise IntegrationUnavailable(
+                "Alertmanager alert is missing its fingerprint"
+            )
+        if not isinstance(labels, Mapping) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in labels.items()
+        ):
+            raise IntegrationUnavailable("Alertmanager alert has malformed labels")
+        if not isinstance(annotations, Mapping) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in annotations.items()
+        ):
+            raise IntegrationUnavailable("Alertmanager alert has malformed annotations")
+        if not isinstance(receivers, list) or any(
+            not isinstance(receiver, Mapping)
+            or not isinstance(receiver.get("name"), str)
+            for receiver in receivers
+        ):
+            raise IntegrationUnavailable("Alertmanager alert has malformed receivers")
+        if (
+            not isinstance(status, Mapping)
+            or not isinstance(status.get("state"), str)
+            or status.get("state") not in {"unprocessed", "active", "suppressed"}
+            or any(
+                not isinstance(status.get(key), list)
+                or any(not isinstance(value, str) for value in status.get(key, []))
+                for key in ("silencedBy", "inhibitedBy", "mutedBy")
+            )
+        ):
+            raise IntegrationUnavailable("Alertmanager alert has malformed status")
+        name = labels.get("alertname")
+        if not isinstance(name, str) or not name.strip():
+            raise IntegrationUnavailable("Alertmanager alert is missing alertname")
         return {
-            "id": str(item.get("fingerprint") or fingerprint(str(labels))),
-            "name": str(labels.get("alertname") or "unclassified"),
-            "severity": str(labels.get("severity") or "unknown"),
-            "labels": {str(key): str(value) for key, value in labels.items()},
-            "message": str(
-                annotations.get("description") or annotations.get("summary") or ""
-            ),
+            "id": fingerprint,
+            "name": name,
+            "severity": labels.get("severity", ""),
+            "labels": dict(labels),
+            "message": annotations.get("description") or annotations.get("summary", ""),
             "timestamp": starts_at,
             "source": "alertmanager",
-            "status": (
-                str(item.get("status", {}).get("state", "active"))
-                if isinstance(item.get("status"), Mapping)
-                else "active"
-            ),
+            "status": status["state"],
         }
 
 
@@ -180,9 +259,8 @@ class ModelAdapter:
             raise IntegrationUnavailable(
                 "The external model endpoint and model identifier are not configured"
             )
-        headers = {"Content-Type": "application/json"}
-        if self.settings.llm_api_key:
-            headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
+        upstream = self.settings.upstream("llm")
+        headers = {"Content-Type": "application/json", **upstream.headers}
         payload = {
             "model": self.settings.llm_model,
             "messages": [
@@ -202,13 +280,16 @@ class ModelAdapter:
                 self.settings.llm_url,
                 json=cast(Any, payload),
                 headers=headers,
-                timeout=self.settings.prometheus_timeout_seconds,
-                verify=self.settings.verify_tls,
+                auth=upstream.basic_auth,
+                timeout=upstream.timeout_seconds,
+                verify=upstream.verify_tls,
             )
             response.raise_for_status()
             result = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise IntegrationUnavailable(f"Model request failed: {exc}") from exc
+        except (requests.RequestException, ValueError, RecursionError) as exc:
+            raise IntegrationUnavailable("Model request failed") from exc
+        if not isinstance(result, Mapping):
+            raise IntegrationUnavailable("Model response was not an object")
         answer = self._extract_answer(result)
         return {"response": answer, "model": self.settings.llm_model}
 

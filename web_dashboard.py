@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 import threading
 import time
 from typing import Any, Mapping, Protocol, cast
@@ -96,6 +97,8 @@ class HttpClient(Protocol):
         *,
         params: Mapping[str, Any] | None = None,
         json: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        auth: tuple[str, str] | None = None,
         timeout: int,
         verify: bool,
     ) -> HttpResponse: ...
@@ -148,9 +151,30 @@ def _error(message: str, status: int, code: str) -> tuple[Any, int]:
     )
 
 
+def _validate_json_data(value: Any, label: str) -> None:
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise IntegrationUnavailable(f"{label} returned a non-finite number")
+        return
+    if isinstance(value, list):
+        for item in value:
+            _validate_json_data(item, label)
+        return
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise IntegrationUnavailable(f"{label} returned malformed JSON data")
+        for item in value.values():
+            _validate_json_data(item, label)
+        return
+    raise IntegrationUnavailable(f"{label} returned malformed JSON data")
+
+
 def _external_json(
     url: str | None,
     label: str,
+    upstream_name: str,
     params: Mapping[str, Any] | None = None,
     method: str = "GET",
     payload: Mapping[str, Any] | None = None,
@@ -158,26 +182,33 @@ def _external_json(
     runtime = _runtime()
     if not url:
         raise IntegrationUnavailable(f"{label} is not configured")
+    upstream = runtime.settings.upstream(upstream_name)
     try:
         response = runtime.http.request(
             method,
             url,
             params=params,
             json=payload,
-            timeout=runtime.settings.prometheus_timeout_seconds,
-            verify=runtime.settings.verify_tls,
+            headers=upstream.headers,
+            auth=upstream.basic_auth,
+            timeout=upstream.timeout_seconds,
+            verify=upstream.verify_tls,
         )
         response.raise_for_status()
-        return response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise IntegrationUnavailable(f"{label} request failed: {exc}") from exc
+        result = response.json()
+        _validate_json_data(result, label)
+        return result
+    except (requests.RequestException, ValueError, RecursionError) as exc:
+        raise IntegrationUnavailable(f"{label} request failed") from exc
 
 
 def _list_payload(payload: Any, key: str) -> list[dict[str, Any]]:
-    values = payload.get(key) if isinstance(payload, dict) else payload
-    if not isinstance(values, list):
+    values = payload.get(key) if isinstance(payload, Mapping) else None
+    if not isinstance(values, list) or any(
+        not isinstance(value, Mapping) for value in values
+    ):
         raise IntegrationUnavailable(f"Configured source did not return a {key} list")
-    return [value for value in values if isinstance(value, dict)]
+    return [dict(value) for value in values]
 
 
 def _refresh_alerts() -> list[dict[str, Any]]:
@@ -197,7 +228,8 @@ def _refresh_metrics() -> list[dict[str, Any]]:
 def _refresh_incidents() -> list[dict[str, Any]]:
     runtime = _runtime()
     incidents = _list_payload(
-        _external_json(runtime.settings.incidents_url, "Incident service"), "incidents"
+        _external_json(runtime.settings.incidents_url, "Incident service", "incidents"),
+        "incidents",
     )
     runtime.state_store.replace("incidents", incidents)
     return incidents
@@ -206,7 +238,7 @@ def _refresh_incidents() -> list[dict[str, Any]]:
 def _refresh_logs() -> list[dict[str, Any]]:
     runtime = _runtime()
     logs = _list_payload(
-        _external_json(runtime.settings.logs_url, "Log service"), "log_events"
+        _external_json(runtime.settings.logs_url, "Log service", "logs"), "log_events"
     )
     runtime.state_store.replace("log_events", logs)
     return logs
@@ -214,21 +246,25 @@ def _refresh_logs() -> list[dict[str, Any]]:
 
 def _refresh_actions() -> dict[str, Any]:
     runtime = _runtime()
-    payload = _external_json(runtime.settings.actions_url, "Action service")
-    if not isinstance(payload, dict):
+    payload = _external_json(runtime.settings.actions_url, "Action service", "actions")
+    if not isinstance(payload, Mapping):
         raise IntegrationUnavailable("Action service did not return an object")
-    runtime.state_store.set("self_healing_stats", payload)
-    return payload
+    result = dict(payload)
+    runtime.state_store.set("self_healing_stats", result)
+    return result
 
 
 def _refresh_insights(kind: str | None = None) -> Any:
     runtime = _runtime()
     params = {"kind": kind} if kind else None
     payload = _external_json(
-        runtime.settings.insights_url, "Insight service", params=params
+        runtime.settings.insights_url, "Insight service", "insights", params=params
     )
-    runtime.state_store.set("insights", payload)
-    return payload
+    if not isinstance(payload, Mapping):
+        raise IntegrationUnavailable("Insight service did not return an object")
+    result = dict(payload)
+    runtime.state_store.set("insights", result)
+    return result
 
 
 def _require_prometheus(expression: str | None) -> list[dict[str, Any]]:
@@ -292,10 +328,9 @@ def health_ready():
     try:
         runtime.prometheus.query(settings.status_query)
         runtime.alertmanager.active_alerts()
-    except IntegrationUnavailable as exc:
+    except IntegrationUnavailable:
         current_app.logger.warning(
             "readiness_check_failed",
-            exc_info=exc,
             extra={"request_id": getattr(g, "request_id", None)},
         )
         return (
@@ -344,24 +379,20 @@ def api_status():
 
 @routes.route("/api/incidents")
 def api_incidents():
-    settings = _runtime().settings
     incidents = _refresh_incidents()
     return jsonify(
         {
             "incidents": incidents,
             "total": len(incidents),
-            "source": settings.incidents_url,
+            "source": "incidents",
         }
     )
 
 
 @routes.route("/api/alerts")
 def api_alerts():
-    settings = _runtime().settings
     alerts = _refresh_alerts()
-    return jsonify(
-        {"alerts": alerts, "total": len(alerts), "source": settings.alertmanager_url}
-    )
+    return jsonify({"alerts": alerts, "total": len(alerts), "source": "alertmanager"})
 
 
 @routes.route("/api/metrics")
@@ -377,7 +408,7 @@ def api_metrics():
         {
             "metrics": metrics_data,
             "anomalies": anomalies,
-            "source": settings.prometheus_url,
+            "source": "prometheus",
         }
     )
 
@@ -413,22 +444,18 @@ def api_query():
 
 @routes.route("/api/log-events")
 def api_log_events():
-    settings = _runtime().settings
     logs = _refresh_logs()
-    return jsonify(
-        {"log_events": logs, "total": len(logs), "source": settings.logs_url}
-    )
+    return jsonify({"log_events": logs, "total": len(logs), "source": "logs"})
 
 
 @routes.route("/api/health-heatmap")
 def api_health_heatmap():
-    settings = _runtime().settings
     metrics_data = _refresh_metrics()
     return jsonify(
         {
             "components": metrics_data,
             "timestamp": _now(),
-            "source": settings.prometheus_url,
+            "source": "prometheus",
         }
     )
 
@@ -437,9 +464,7 @@ def api_health_heatmap():
 def api_historical_trends():
     settings = _runtime().settings
     samples = _require_prometheus(settings.metrics_query)
-    return jsonify(
-        {"samples": samples, "source": settings.prometheus_url, "timestamp": _now()}
-    )
+    return jsonify({"samples": samples, "source": "prometheus", "timestamp": _now()})
 
 
 @routes.route("/api/anomaly-timeline")
@@ -527,11 +552,10 @@ def api_ml_insights():
 
 @routes.route("/api/performance-metrics")
 def api_performance_metrics():
-    settings = _runtime().settings
     return jsonify(
         {
             "samples": _refresh_metrics(),
-            "source": settings.prometheus_url,
+            "source": "prometheus",
             "timestamp": _now(),
         }
     )
@@ -559,9 +583,12 @@ def api_set_thresholds():
     result = _external_json(
         runtime.settings.thresholds_url,
         "Threshold service",
+        "thresholds",
         method="POST",
         payload=payload,
     )
+    if not isinstance(result, Mapping):
+        raise IntegrationUnavailable("Threshold service did not return an object")
     principal = g.principal
     runtime.audit_log.record(
         "thresholds_updated",
@@ -570,7 +597,7 @@ def api_set_thresholds():
         actor=principal.subject,
         auth_method=principal.auth_method,
     )
-    return jsonify(result)
+    return jsonify(dict(result))
 
 
 @routes.route("/api/slo")
@@ -726,9 +753,12 @@ def create_app(
 
     @application.errorhandler(Exception)
     def handle_unexpected_error(error: Exception):
-        current_app.logger.exception(
+        current_app.logger.error(
             "unhandled_request_error",
-            extra={"request_id": getattr(g, "request_id", None)},
+            extra={
+                "request_id": getattr(g, "request_id", None),
+                "error_type": type(error).__name__,
+            },
         )
         return _error("Unexpected service error", 500, "internal_error")
 

@@ -6,26 +6,28 @@ The service is a thin operational control plane. It is trusted to authenticate A
 
 > A missing or unavailable source is an operational failure, not a reason to return a plausible-looking value.
 
-Prometheus and Alertmanager are the first-party operational sources. The incident, log, action, insight, and threshold URLs are service-to-service boundaries owned by the deployment. The assistant is an external model boundary and receives only the context assembled from configured sources. Tool execution and remediation approval remain outside this repository.
+Prometheus and Alertmanager are the first-party operational sources. The incident, log, action, insight, and threshold URLs are service-to-service boundaries owned by the deployment. The schemas below are the contract this application accepts; they do not claim to describe an uninspected deployment-owned provider. The assistant is an external model boundary and receives only the context assembled from configured sources. Tool execution and remediation approval remain outside this repository.
 
 ## Required source contracts
 
-| Variable | Expected contract | Read/write |
+| Upstream | Request | Accepted response contract |
 |---|---|---|
-| `AIOPS_PROMETHEUS_URL` | Prometheus base URL exposing `/api/v1/query` | Read |
-| `AIOPS_STATUS_QUERY` | PromQL expression for dependency status | Read |
-| `AIOPS_METRICS_QUERY` | PromQL expression for dashboard metrics | Read |
-| `AIOPS_ANOMALIES_QUERY` | PromQL expression for anomaly series | Read |
-| `AIOPS_ALERTMANAGER_URL` | Alertmanager base URL exposing `/api/v2/alerts` and `/api/v2/silences` | Read/write |
-| `AIOPS_INCIDENTS_URL` | JSON endpoint returning `{ "incidents": [...] }` | Read |
-| `AIOPS_LOGS_URL` | JSON endpoint returning `{ "log_events": [...] }` | Read |
-| `AIOPS_ACTIONS_URL` | JSON endpoint returning the current remediation state | Read |
-| `AIOPS_INSIGHTS_URL` | JSON endpoint supporting `kind=recommendations`, `kind=rca`, and `kind=ml` | Read |
-| `AIOPS_THRESHOLDS_URL` | JSON endpoint accepting the exact `cpu`, `mem`, and `disk` fields | Write |
-| `AIOPS_LLM_URL` | OpenAI-compatible chat or response endpoint | Read/write request |
-| `AIOPS_LLM_MODEL` | Deployment-owned model identifier | Read |
+| Prometheus (`AIOPS_PROMETHEUS_URL`) | `GET /api/v1/query?query=<PromQL>`; expressions come from `AIOPS_STATUS_QUERY`, `AIOPS_METRICS_QUERY`, or `AIOPS_ANOMALIES_QUERY`. | JSON object with `status: "success"`, `data.resultType: "vector"`, and `data.result` as a list. Every item must contain a `metric` string-to-string object and a `value` pair of finite numeric timestamp and finite decimal-string sample. An empty vector is valid; a malformed item rejects the whole response. The app returns normalized `name`, `value`, `timestamp`, and `labels`. |
+| Alertmanager (`AIOPS_ALERTMANAGER_URL`) | `GET /api/v2/alerts` with active, non-silenced, non-inhibited filters; `POST /api/v2/silences` with `matchers`, `startsAt`, `endsAt`, `createdBy`, and `comment`. | The alerts response is a list of objects. Each item requires a non-empty `fingerprint`, label and annotation string maps, receiver objects with string names, timezone-aware `startsAt`, `updatedAt`, and `endsAt`, `labels.alertname`, and `status.state` in `unprocessed`, `active`, or `suppressed` plus string lists `silencedBy`, `inhibitedBy`, and `mutedBy`. A silence response requires a non-empty string `silenceID`. |
+| Incidents (`AIOPS_INCIDENTS_URL`) | `GET` the configured endpoint. | Object with `incidents` as a list of JSON objects. Item fields are opaque and deployment-owned; non-object members are rejected. |
+| Logs (`AIOPS_LOGS_URL`) | `GET` the configured endpoint. | Object with `log_events` as a list of JSON objects. Item fields are opaque and deployment-owned; non-object members are rejected. |
+| Actions (`AIOPS_ACTIONS_URL`) | `GET` the configured endpoint. | JSON object representing the current action/remediation state. Nested fields are opaque and deployment-owned; no local command is executed. |
+| Insights (`AIOPS_INSIGHTS_URL`) | `GET` the configured endpoint with `kind=recommendations`, `kind=rca`, or `kind=ml`. | JSON object. Nested fields are opaque and deployment-owned. |
+| Thresholds (`AIOPS_THRESHOLDS_URL`) | `POST` a JSON object containing exactly `cpu`, `mem`, and `disk`; each is a finite number strictly between `0` and `100`. | Successful response must be a JSON object. The application does not infer or fabricate an upstream result. |
+| Model (`AIOPS_LLM_URL`, `AIOPS_LLM_MODEL`) | OpenAI-compatible JSON request; optional `AIOPS_LLM_API_KEY` is sent as a Bearer credential. | JSON object containing either a non-empty `choices[0].message.content` string or a non-empty `output_text` string. |
 
-Response validation is endpoint-specific, not a uniform guarantee across every configured service. Typed clients enforce their defined response checks; generic JSON endpoints do not yet share versioned schemas or equivalent validation. Some malformed payloads may not map uniformly to the documented unavailable response. Add contract tests for each actual upstream before relying on its route. The application does not silently use a local fixture, random value, stale sample, or placeholder response.
+### Authentication and transport
+
+Each operational upstream has an independent `AIOPS_<UPSTREAM>_AUTH_TYPE` setting: `none` (the backward-compatible default), `bearer`, or `basic`. Bearer credentials use `AIOPS_<UPSTREAM>_BEARER_TOKEN`; Basic credentials use both `AIOPS_<UPSTREAM>_USERNAME` and `AIOPS_<UPSTREAM>_PASSWORD`. A secret provided with `AUTH_TYPE=none`, incomplete Basic credentials, or mixed credential modes fail configuration rather than being silently ignored. The supported names are `PROMETHEUS`, `ALERTMANAGER`, `INCIDENTS`, `LOGS`, `ACTIONS`, `INSIGHTS`, and `THRESHOLDS`. Use a deployment-owned authenticated proxy for other schemes; do not put credentials in endpoint URLs.
+
+`AIOPS_<UPSTREAM>_TIMEOUT_SECONDS` and `AIOPS_<UPSTREAM>_VERIFY_TLS` override the per-request timeout and TLS verification for that source. Otherwise they inherit the existing `AIOPS_PROMETHEUS_TIMEOUT_SECONDS` and `AIOPS_VERIFY_TLS` settings. Timeouts are bounded to 1–60 seconds. TLS verification should remain enabled in production. The model endpoint uses the shared timeout/TLS settings and its existing Bearer API key.
+
+Upstream credentials and configured endpoint URLs are read from injected environment/secret-manager values and excluded from settings representations; credentials are never included in API results or upstream error text. API `source` fields are stable integration labels, not configured URLs; startup also rejects URL userinfo and recognized secret query parameters. Missing configuration, network/timeout failure, HTTP error (including upstream authentication failure), invalid JSON, or a schema violation maps to the same structured `503 integration_unavailable` response. Client request validation remains `400`; gateway authentication/authorization retains its own `401`/`403` mapping. Valid empty lists are returned as empty lists. Invalid records are rejected as a whole rather than filtered, and a failed refresh never returns a previous cached sample as if it were current.
 
 ## Health and reliability semantics
 
