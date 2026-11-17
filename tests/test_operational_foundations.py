@@ -14,6 +14,7 @@ from werkzeug.test import Client
 from werkzeug.wrappers import Response
 
 import web_dashboard
+from src.platform.audit import AuditEvent, AuditSinkUnavailable
 from src.platform.config import ConfigurationError, Settings
 from src.platform.integrations import ApprovalRejected, IntegrationUnavailable
 from src.platform.security import (
@@ -75,6 +76,21 @@ class FakeApproval:
             "action": action,
             "payload_sha256": "test-payload-digest",
         }
+
+
+class FakeAuditSink:
+    def __init__(self, *, fail_calls: set[int] | None = None):
+        self.fail_calls = fail_calls or set()
+        self.calls = 0
+        self.events: list[AuditEvent] = []
+
+    def append(self, event: AuditEvent) -> None:
+        self.calls += 1
+        if self.calls in self.fail_calls:
+            raise AuditSinkUnavailable("fake sink failure")
+        if not event.verify():
+            raise AssertionError("invalid event reached the audit sink")
+        self.events.append(event)
 
 
 class FakeAlertmanager:
@@ -201,6 +217,8 @@ def make_client(
     alertmanager: FakeAlertmanager | None = None,
     model: FakeModel | None = None,
     http: FakeHttp | None = None,
+    audit_sink: FakeAuditSink | None = None,
+    use_default_audit_sink: bool = True,
 ):
     app = create_app(
         settings or make_settings(),
@@ -210,6 +228,11 @@ def make_client(
             alertmanager=alertmanager,
             model=model,
             http=http,
+            audit_sink=(
+                audit_sink
+                if audit_sink is not None
+                else (FakeAuditSink() if use_default_audit_sink else None)
+            ),
         ),
     )
     return app.test_client()
@@ -545,6 +568,7 @@ def test_query_maps_unavailable_upstream_to_503():
 
 def test_threshold_validation_and_successful_fake_upstream_request():
     http = FakeHttp({"updated": True})
+    audit_sink = FakeAuditSink()
     client = make_client(
         settings=make_settings(
             thresholds_url="https://thresholds.test/api",
@@ -554,6 +578,7 @@ def test_threshold_validation_and_successful_fake_upstream_request():
         ),
         approvals=FakeApproval(),
         http=http,
+        audit_sink=audit_sink,
     )
 
     headers = {
@@ -580,9 +605,22 @@ def test_threshold_validation_and_successful_fake_upstream_request():
     ).get_json()["events"][-1]
     assert audit["event"] == "thresholds_updated"
     assert audit["details"]["actor"] == "operator-1"
+    assert "threshold-approval-1" not in str(audit)
+    assert "approval_id_fingerprint" in audit["details"]
+    assert [event.outcome for event in audit_sink.events[-2:]] == [
+        "started",
+        "succeeded",
+    ]
+    final_event = audit_sink.events[-1]
+    assert final_event.schema_version == "1.0"
+    assert final_event.request_id == successful.headers["X-Request-ID"]
+    assert final_event.actor == "operator-1"
+    assert final_event.details["action"] == "set_thresholds"
+    assert final_event.details["target"] == "thresholds"
 
 
 def test_threshold_upstream_unavailable_is_not_synthesized():
+    audit_sink = FakeAuditSink()
     client = make_client(
         settings=make_settings(
             thresholds_url="https://thresholds.test/api",
@@ -592,6 +630,7 @@ def test_threshold_upstream_unavailable_is_not_synthesized():
         ),
         approvals=FakeApproval(),
         http=FakeHttp(error=requests.ConnectionError("threshold endpoint unavailable")),
+        audit_sink=audit_sink,
     )
 
     response = client.post(
@@ -605,11 +644,13 @@ def test_threshold_upstream_unavailable_is_not_synthesized():
 
     assert response.status_code == 503
     assert response.get_json()["error"]["code"] == "integration_unavailable"
+    assert [event.outcome for event in audit_sink.events] == ["started", "unknown"]
 
 
 def test_silence_rejects_invalid_durations_and_accepts_valid_request():
     alertmanager = FakeAlertmanager([{"id": "alert-1"}])
     approvals = FakeApproval()
+    audit_sink = FakeAuditSink()
     client = make_client(
         settings=make_settings(
             gateway_token=GATEWAY_TOKEN,
@@ -618,6 +659,7 @@ def test_silence_rejects_invalid_durations_and_accepts_valid_request():
         ),
         approvals=approvals,
         alertmanager=alertmanager,
+        audit_sink=audit_sink,
     )
     headers = gateway_headers(ALERT_SILENCE_SCOPE)
 
@@ -665,6 +707,16 @@ def test_silence_rejects_invalid_durations_and_accepts_valid_request():
     assert event["event"] == "alert_suppressed"
     assert event["request_id"] == "silence-123"
     assert event["details"]["actor"] == "operator-1"
+    assert "silence-approval-1" not in str(event)
+    assert "approval_id_fingerprint" in event["details"]
+    final_event = audit_sink.events[-1]
+    assert final_event.event_type == "mutation.suppress_alert"
+    assert final_event.schema_version == "1.0"
+    assert final_event.outcome == "succeeded"
+    assert final_event.request_id == "silence-123"
+    assert final_event.actor == "operator-1"
+    assert final_event.details["target"] == "alert-1"
+    assert "test suppression" not in final_event.serialize()
 
 
 def test_missing_or_rejected_approval_never_executes_a_mutation():
@@ -709,7 +761,8 @@ def test_missing_or_rejected_approval_never_executes_a_mutation():
 
 
 def test_audit_redacts_secrets_and_does_not_store_raw_query():
-    client = make_client(model=FakeModel())
+    audit_sink = FakeAuditSink()
+    client = make_client(model=FakeModel(), audit_sink=audit_sink)
     runtime = client.application.extensions["aiops"]
     runtime.audit_log.record(
         "redaction_check", "trace-1", authorization="Bearer top-secret-token"
@@ -724,6 +777,7 @@ def test_audit_redacts_secrets_and_does_not_store_raw_query():
     assert redaction_event["details"]["authorization"] == "[REDACTED]"
     query_event = next(event for event in events if event["event"] == "ai_query")
     assert "private operational question" not in str(query_event)
+    assert audit_sink.events == []
 
 
 def test_template_does_not_render_source_data_as_html():
@@ -824,3 +878,181 @@ def test_unmatched_api_paths_do_not_become_metric_labels():
     assert 'route="__unmatched__"' in exposition
     assert slo_snapshot["measurement_state"] == "no_data"
     assert slo_snapshot["excluded_client_errors"] == 2
+
+
+def test_mutation_routes_fail_closed_without_an_audit_sink():
+    alertmanager = FakeAlertmanager([{"id": "alert-1"}])
+    http = FakeHttp({"updated": True})
+    app = create_app(
+        make_settings(
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+            thresholds_url="https://thresholds.test/api",
+        ),
+        dependencies=DashboardDependencies(
+            approvals=FakeApproval(), alertmanager=alertmanager, http=http
+        ),
+    )
+    client = app.test_client()
+
+    silence = client.post(
+        "/api/suppress-alert",
+        json={"alert_id": "alert-1", "duration": 5, "comment": "change"},
+        headers={
+            **gateway_headers(ALERT_SILENCE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-1",
+        },
+    )
+    thresholds = client.post(
+        "/api/set-thresholds",
+        json={"cpu": 80, "mem": 85, "disk": 90},
+        headers={
+            **gateway_headers(THRESHOLDS_WRITE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-2",
+        },
+    )
+
+    assert silence.status_code == thresholds.status_code == 503
+    for response in (silence, thresholds):
+        assert response.get_json()["error"]["code"] == "audit_sink_unavailable"
+        assert response.get_json()["operation_outcome"] == "not_started"
+    assert alertmanager.silences == []
+    assert http.calls == []
+
+
+def test_sink_failure_before_mutation_prevents_approval_and_upstream_calls():
+    sink = FakeAuditSink(fail_calls={1})
+    approvals = FakeApproval()
+    http = FakeHttp({"updated": True})
+    client = make_client(
+        settings=make_settings(
+            thresholds_url="https://thresholds.test/api",
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+        ),
+        approvals=approvals,
+        http=http,
+        audit_sink=sink,
+    )
+
+    response = client.post(
+        "/api/set-thresholds",
+        json={"cpu": 80, "mem": 85, "disk": 90},
+        headers={
+            **gateway_headers(THRESHOLDS_WRITE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-1",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "audit_sink_unavailable"
+    assert response.get_json()["operation_outcome"] == "not_started"
+    assert approvals.calls == []
+    assert http.calls == []
+
+
+def test_result_sink_failure_after_write_reports_success_and_reconcile_instruction():
+    sink = FakeAuditSink(fail_calls={2})
+    http = FakeHttp({"updated": True})
+    client = make_client(
+        settings=make_settings(
+            thresholds_url="https://thresholds.test/api",
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+        ),
+        approvals=FakeApproval(),
+        http=http,
+        audit_sink=sink,
+    )
+
+    response = client.post(
+        "/api/set-thresholds",
+        json={"cpu": 80, "mem": 85, "disk": 90},
+        headers={
+            **gateway_headers(THRESHOLDS_WRITE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-1",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "audit_sink_unavailable"
+    assert response.get_json()["operation_outcome"] == "succeeded"
+    assert "reconcile before retrying" in response.get_json()["error"]["message"]
+    assert len(http.calls) == 1
+    assert [event.outcome for event in sink.events] == ["started"]
+
+
+def test_rejected_approval_records_result_without_sending_mutation():
+    sink = FakeAuditSink()
+    alertmanager = FakeAlertmanager([{"id": "alert-1"}])
+    client = make_client(
+        settings=make_settings(
+            gateway_token=GATEWAY_TOKEN,
+            approval_url="https://approval.test/verify-and-consume",
+            approval_api_key="a" * 24,
+        ),
+        approvals=FakeApproval(reject=True),
+        alertmanager=alertmanager,
+        audit_sink=sink,
+    )
+
+    response = client.post(
+        "/api/suppress-alert",
+        json={"alert_id": "alert-1", "duration": 5, "comment": "change"},
+        headers={
+            **gateway_headers(ALERT_SILENCE_SCOPE),
+            "X-AiOps-Approval-ID": "approval-rejected",
+        },
+    )
+
+    assert response.status_code == 403
+    assert [event.outcome for event in sink.events] == ["started", "rejected"]
+    assert alertmanager.silences == []
+
+
+def test_authorization_denial_is_versioned_and_correlated_in_the_sink():
+    sink = FakeAuditSink()
+    client = make_client(
+        settings=make_settings(gateway_token=GATEWAY_TOKEN), audit_sink=sink
+    )
+
+    response = client.post(
+        "/api/suppress-alert",
+        json={"alert_id": "alert-1", "duration": 5, "comment": "private comment"},
+        headers={
+            **gateway_headers(READ_SCOPE),
+            "X-Request-ID": "denied-request-1",
+        },
+    )
+
+    assert response.status_code == 403
+    event = sink.events[-1]
+    assert event.outcome == "authorization_denied"
+    assert event.details["phase"] == "denial"
+    assert event.request_id == "denied-request-1"
+    assert event.actor == "operator-1"
+    assert "private comment" not in event.serialize()
+
+
+def test_authentication_denial_remains_denied_when_best_effort_sink_fails():
+    sink = FakeAuditSink(fail_calls={1})
+    client = make_client(
+        settings=make_settings(gateway_token=GATEWAY_TOKEN), audit_sink=sink
+    )
+
+    response = client.post(
+        "/api/suppress-alert",
+        json={"alert_id": "alert-1", "duration": 5, "comment": "secret"},
+        headers={
+            **gateway_headers(ALERT_SILENCE_SCOPE),
+            "X-AiOps-Gateway-Token": "invalid-token",
+            "X-Request-ID": "denied-request-2",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.get_json()["error"]["code"] == "authentication_required"
+    assert sink.events == []
