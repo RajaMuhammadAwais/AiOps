@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import math
 import threading
 import time
@@ -24,6 +25,8 @@ import requests
 
 from src.platform.config import Settings
 from src.platform.integrations import (
+    ApprovalAdapter,
+    ApprovalRejected,
     AlertmanagerAdapter,
     IntegrationUnavailable,
     ModelAdapter,
@@ -65,6 +68,12 @@ ROUTE_SCOPES = {
 
 class PrometheusClient(Protocol):
     def query(self, expression: str | None) -> list[dict[str, Any]]: ...
+
+
+class ApprovalClient(Protocol):
+    def verify_and_consume(
+        self, approval_id: str, action: str, operation: Mapping[str, Any]
+    ) -> dict[str, str]: ...
 
 
 class AlertmanagerClient(Protocol):
@@ -109,6 +118,7 @@ class DashboardDependencies:
     """External clients optionally supplied by a deployment or a test."""
 
     prometheus: PrometheusClient | None = None
+    approvals: ApprovalClient | None = None
     alertmanager: AlertmanagerClient | None = None
     model: ModelClient | None = None
     http: HttpClient | None = None
@@ -120,6 +130,7 @@ class DashboardRuntime:
 
     settings: Settings
     prometheus: PrometheusClient
+    approvals: ApprovalClient
     alertmanager: AlertmanagerClient
     model: ModelClient
     http: HttpClient
@@ -271,6 +282,90 @@ def _require_prometheus(expression: str | None) -> list[dict[str, Any]]:
     return _runtime().prometheus.query(expression)
 
 
+def _current_slo_snapshot(runtime: DashboardRuntime) -> dict[str, Any]:
+    settings = runtime.settings
+    if not settings.production:
+        return runtime.metrics_registry.slo_snapshot(
+            settings.slo_target, settings.slo_window_minutes
+        )
+    if not settings.prometheus_url:
+        raise IntegrationUnavailable(
+            "Prometheus is required for production SLO calculations"
+        )
+
+    service = json.dumps(settings.service_name, ensure_ascii=False)
+    window = f"{settings.slo_window_minutes}m"
+
+    def event_count(status_pattern: str) -> float:
+        selector = (
+            "aiops_http_requests_total{"
+            f'service={service},scope="api",status=~"{status_pattern}"'
+            "}"
+        )
+        expression = f"sum(increase({selector}[{window}]))"
+        samples = runtime.prometheus.query(expression)
+        total = 0.0
+        for sample in samples:
+            value = sample.get("value")
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise IntegrationUnavailable(
+                    "Prometheus returned an invalid SLO event count"
+                )
+            total += float(value)
+        return total
+
+    good_events = event_count("2..|3..")
+    total_events = event_count("2..|3..|429|5..")
+    try:
+        return runtime.metrics_registry.shared_slo_snapshot(
+            good_events,
+            total_events,
+            settings.slo_target,
+            settings.slo_window_minutes,
+        )
+    except ValueError as exc:
+        raise IntegrationUnavailable(
+            "Prometheus returned inconsistent SLO event counts"
+        ) from exc
+
+
+def _verify_mutation_approval(
+    action: str, operation: Mapping[str, Any]
+) -> dict[str, str]:
+    """Require an external, one-time approval bound to this exact mutation."""
+    runtime = _runtime()
+    approval_id = request.headers.get("X-AiOps-Approval-ID", "")
+    if not runtime.settings.approval_url or not runtime.settings.approval_api_key:
+        raise IntegrationUnavailable("Operator approval verification is not configured")
+    try:
+        approval = runtime.approvals.verify_and_consume(approval_id, action, operation)
+    except ApprovalRejected:
+        runtime.audit_log.record(
+            "operator_approval_rejected",
+            g.request_id,
+            action=action,
+            approval_id=approval_id[:200],
+            actor=g.principal.subject,
+        )
+        raise
+    runtime.audit_log.record(
+        "operator_approval_verified",
+        g.request_id,
+        action=action,
+        approval_id=approval["approval_id"],
+        approved_by=approval["approved_by"],
+        approved_at=approval["approved_at"],
+        payload_sha256=approval["payload_sha256"],
+        actor=g.principal.subject,
+    )
+    return approval
+
+
 def _build_context() -> dict[str, Any]:
     runtime = _runtime()
     settings = runtime.settings
@@ -370,9 +465,7 @@ def api_status():
             "samples": samples,
             "active_incidents": len(incidents),
             "active_alerts": len(alerts),
-            "slo": runtime.metrics_registry.slo_snapshot(
-                settings.slo_target, settings.slo_window_minutes
-            ),
+            "slo": _current_slo_snapshot(runtime),
         }
     )
 
@@ -508,6 +601,10 @@ def api_suppress_alert():
         )
     matchers = [{"name": "fingerprint", "value": alert_id, "isRegex": False}]
     principal = g.principal
+    approval = _verify_mutation_approval(
+        "suppress_alert",
+        {"alert_id": alert_id, "duration": duration, "comment": comment},
+    )
     result = runtime.alertmanager.create_silence(
         matchers, duration, comment, principal.subject
     )
@@ -519,6 +616,8 @@ def api_suppress_alert():
         silence_id=result.get("silence_id"),
         actor=principal.subject,
         auth_method=principal.auth_method,
+        approval_id=approval["approval_id"],
+        approved_by=approval["approved_by"],
     )
     return jsonify({"status": "suppressed", "alert_id": alert_id, **result})
 
@@ -580,6 +679,7 @@ def api_set_thresholds():
             or not 0 < float(value) < 100
         ):
             raise RequestValidationError(f"{key} must be a number between 0 and 100")
+    approval = _verify_mutation_approval("set_thresholds", payload)
     result = _external_json(
         runtime.settings.thresholds_url,
         "Threshold service",
@@ -596,6 +696,8 @@ def api_set_thresholds():
         fields=list(payload),
         actor=principal.subject,
         auth_method=principal.auth_method,
+        approval_id=approval["approval_id"],
+        approved_by=approval["approved_by"],
     )
     return jsonify(dict(result))
 
@@ -603,11 +705,7 @@ def api_set_thresholds():
 @routes.route("/api/slo")
 def api_slo():
     runtime = _runtime()
-    return jsonify(
-        runtime.metrics_registry.slo_snapshot(
-            runtime.settings.slo_target, runtime.settings.slo_window_minutes
-        )
-    )
+    return jsonify(_current_slo_snapshot(runtime))
 
 
 @routes.route("/api/audit")
@@ -646,6 +744,11 @@ def create_app(
         ),
         model=(
             clients.model if clients.model is not None else ModelAdapter(app_settings)
+        ),
+        approvals=(
+            clients.approvals
+            if clients.approvals is not None
+            else ApprovalAdapter(app_settings)
         ),
         http=clients.http if clients.http is not None else requests.Session(),
         metrics_registry=MetricsRegistry(
@@ -697,9 +800,10 @@ def create_app(
         started_at = getattr(g, "started_at", time.perf_counter())
         runtime.metrics_registry.observe(
             request.method,
-            request.path,
+            request.url_rule.rule if request.url_rule else "__unmatched__",
             response.status_code,
             time.perf_counter() - started_at,
+            include_in_sli=request.path.startswith("/api/"),
         )
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -745,10 +849,24 @@ def create_app(
         )
         return _error(str(error), 503, "integration_unavailable")
 
+    @application.errorhandler(ApprovalRejected)
+    def handle_approval_rejected(error: ApprovalRejected):
+        return _error(str(error), 403, "approval_required")
+
     @application.errorhandler(413)
-    def handle_payload_too_large(_error):
+    def handle_payload_too_large(exception):
         return _error(
             "Request payload exceeds the configured limit", 413, "payload_too_large"
+        )
+
+    @application.errorhandler(404)
+    def handle_not_found(exception):
+        return _error("Requested resource was not found", 404, "not_found")
+
+    @application.errorhandler(405)
+    def handle_method_not_allowed(exception):
+        return _error(
+            "Method is not allowed for this resource", 405, "method_not_allowed"
         )
 
     @application.errorhandler(Exception)

@@ -255,6 +255,8 @@ class Settings:
     service_name: str
     version: str
     api_key: str | None = field(repr=False)
+    approval_url: str | None = field(repr=False)
+    approval_api_key: str | None = field(repr=False)
     allowed_origins: Tuple[str, ...]
     prometheus_url: str | None = field(repr=False)
     alertmanager_url: str | None = field(repr=False)
@@ -330,6 +332,12 @@ class Settings:
                 "AIOPS_ENV must be development, test, staging, or production"
             )
 
+        prometheus_url = _upstream_url("AIOPS_PROMETHEUS_URL")
+        if environment in {"production", "prod"} and not prometheus_url:
+            raise ConfigurationError(
+                "AIOPS_PROMETHEUS_URL is required in production for shared SLO data"
+            )
+
         api_key = _optional("AIOPS_API_KEY")
         if environment in {"production", "prod"} and (not api_key or len(api_key) < 24):
             raise ConfigurationError(
@@ -343,6 +351,30 @@ class Settings:
             raise ConfigurationError(
                 "AIOPS_GATEWAY_TOKEN must be at least 32 characters"
             )
+
+        approval_url = _optional("AIOPS_APPROVAL_URL")
+        approval_api_key = _optional("AIOPS_APPROVAL_API_KEY")
+        if approval_api_key and len(approval_api_key) < 24:
+            raise ConfigurationError(
+                "AIOPS_APPROVAL_API_KEY must be at least 24 characters"
+            )
+        if bool(approval_url) != bool(approval_api_key):
+            raise ConfigurationError(
+                "AIOPS_APPROVAL_URL and AIOPS_APPROVAL_API_KEY must be configured together"
+            )
+        if approval_url:
+            parsed_approval_url = urlsplit(approval_url)
+            if (
+                parsed_approval_url.scheme != "https"
+                or not parsed_approval_url.hostname
+                or parsed_approval_url.username
+                or parsed_approval_url.password
+                or parsed_approval_url.query
+                or parsed_approval_url.fragment
+            ):
+                raise ConfigurationError(
+                    "AIOPS_APPROVAL_URL must use HTTPS without credentials, query, or fragment data"
+                )
 
         log_level = _required("AIOPS_LOG_LEVEL").upper()
         if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
@@ -368,9 +400,11 @@ class Settings:
             service_name=_required("AIOPS_SERVICE_NAME"),
             version=_required("AIOPS_VERSION"),
             api_key=api_key,
+            approval_url=approval_url,
+            approval_api_key=approval_api_key,
             gateway_token=gateway_token,
             allowed_origins=_origins(),
-            prometheus_url=_upstream_url("AIOPS_PROMETHEUS_URL"),
+            prometheus_url=prometheus_url,
             alertmanager_url=_upstream_url("AIOPS_ALERTMANAGER_URL"),
             incidents_url=_upstream_url("AIOPS_INCIDENTS_URL"),
             logs_url=_upstream_url("AIOPS_LOGS_URL"),

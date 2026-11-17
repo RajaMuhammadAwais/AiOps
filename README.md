@@ -128,7 +128,7 @@ export AIOPS_PORT="<1-65535>"
 
 ### Required for readiness
 
-`/health/ready` requires all three of the following values and a successful upstream check:
+`/health/ready` requires all three of the following values and a successful upstream check. Production also requires `AIOPS_PROMETHEUS_URL` for shared SLO calculations:
 
 ```bash
 export AIOPS_PROMETHEUS_URL="<prometheus-base-url>"
@@ -161,6 +161,8 @@ export AIOPS_THRESHOLDS_URL="<threshold-write-endpoint>"
 export AIOPS_LLM_URL="<openai-compatible-chat-endpoint>"
 export AIOPS_LLM_API_KEY="<secret-if-required-by-model-endpoint>"
 export AIOPS_LLM_MODEL="<deployment-model-identifier>"
+export AIOPS_APPROVAL_URL="<approval-verify-and-consume-https-endpoint>"
+export AIOPS_APPROVAL_API_KEY="<approval-service-secret-at-least-24-characters>"
 ```
 
 The angle-bracket values above are configuration placeholders, not defaults. Do not copy credentials, production URLs, PromQL expressions, or tokens into the repository.
@@ -185,10 +187,26 @@ The launcher uses Flask's development server and is not a production server. For
 | `/health/live` | Public | The Python process is running and can return an HTTP response. It does not prove upstream availability. |
 | `/health/ready` | Public | Prometheus and Alertmanager configuration and connectivity satisfy the readiness contract. Returns `503` when requirements are missing or upstream checks fail. |
 | `/api/*` | Protected when `AIOPS_API_KEY` or `AIOPS_GATEWAY_TOKEN` is configured; production requires `AIOPS_API_KEY` | Read routes require `aiops:read`; writes require their exact action scope. With neither credential configured outside production, only read scope is granted anonymously. |
-| `/metrics` | Protected by the same API-key or gateway authentication | Prometheus-compatible request counters and bounded duration sum/count. `/api/slo` is a separate process-local snapshot, not exported here. |
+| `/metrics` | Protected by the same API-key or gateway authentication | Prometheus-compatible request counters and fixed-bucket latency histograms with bounded route-template labels. |
+| `/api/slo` | Protected API route | Returns a process-local diagnostic in development/test and a Prometheus-aggregated SLI in production; production has no local fallback. |
 | `X-Request-ID` | Response header | Every response receives a request identifier; a caller-provided identifier is preserved. |
 
 The rate limiter is thread-safe but process-local and keyed by the direct peer address. When deploying multiple workers or replicas, enforce the authoritative rate limit at the gateway or use a shared limiter. Do not assume the in-process limiter is a cluster-wide security control.
+
+The request-availability SLI counts final `2xx`/`3xx` API responses as good events; its denominator also includes `429` and `5xx` responses. Other `4xx` responses are excluded as caller errors. Empty windows report `measurement_state: "no_data"` and a `null` availability rather than suggesting 100%. Development/test snapshots are bounded, process-local diagnostics. In production, `/api/slo` uses `sum(increase(aiops_http_requests_total{...}[window]))` against the configured Prometheus server and fails with `503` if shared telemetry is unavailable. Scrape every app instance directly and retain samples for at least `AIOPS_SLO_WINDOW_MINUTES`; Prometheus storage and retention durability remain deployment responsibilities.
+
+The production numerator and denominator correspond to these PromQL expressions (replace the service label and window with the deployment values):
+
+```promql
+sum(increase(aiops_http_requests_total{service="<service-name>",scope="api",status=~"2..|3.."}[60m]))
+sum(increase(aiops_http_requests_total{service="<service-name>",scope="api",status=~"2..|3..|429|5.."}[60m]))
+```
+
+The exported fixed-bucket histogram supports aggregate percentile queries, for example a service-wide API p95 over five minutes:
+
+```promql
+histogram_quantile(0.95, sum by (le) (rate(aiops_http_request_duration_seconds_bucket{service="<service-name>",scope="api"}[5m])))
+```
 
 ## API reference
 
@@ -213,6 +231,8 @@ All `/api/*` routes and `/metrics` are rate-limited. Configure either an API key
 | `aiops:read` | Read API routes, `/api/query`, and `/metrics` |
 | `aiops:alerts:silence` | `POST /api/suppress-alert` only |
 | `aiops:thresholds:write` | `POST /api/set-thresholds` only |
+
+Each mutating request also requires an `X-AiOps-Approval-ID` from the external approval service. Before making a change, AiOps verifies and atomically consumes a one-time approval bound to the exact action and canonical payload digest. The approval service must return an approved identity and timestamp; missing approval configuration fails closed with `503`, while a rejected, reused, or mismatched approval returns `403`. Configure `AIOPS_APPROVAL_URL` as an HTTPS endpoint without embedded credentials or query/fragment data, and keep its separate API key in the deployment secret manager. A scope-authorized gateway identity is still required; an approval alone does not authorize the caller. See [the model-assisted request security contract](docs/security/model-assisted-requests.md) for the trust boundaries and data contract.
 
 For browser use, authenticate the user at a same-origin gateway/session layer. The gateway must strip any client-supplied `X-AiOps-Gateway-Token`, `X-AiOps-Principal`, and `X-AiOps-Scopes` headers, then set them itself after authenticating the session. It sends the server-side `AIOPS_GATEWAY_TOKEN` (at least 32 characters), the authenticated principal, and space-separated scope names to AiOps. Keep the gateway token in the gateway and service secret manager; never expose it or `AIOPS_API_KEY` to JavaScript. Restrict direct access to the app so requests use the trusted gateway path.
 
@@ -258,7 +278,7 @@ The service validates that `query` is a non-empty string within `AIOPS_MAX_QUERY
 
 #### Suppress an active Alertmanager alert
 
-Send this request through the trusted gateway as a principal with `aiops:alerts:silence`; an API key alone receives `403` for this action. Do not send the gateway token from browser JavaScript.
+Send this request through the trusted gateway as a principal with `aiops:alerts:silence`, and include the one-time `X-AiOps-Approval-ID` header. An API key alone receives `403` for this action. Do not send the gateway token from browser JavaScript.
 
 ```json
 {
@@ -272,7 +292,7 @@ The alert must exist in the current active Alertmanager response. `duration` is 
 
 #### Set thresholds through the configured threshold service
 
-Send this request through the trusted gateway as a principal with `aiops:thresholds:write`; the alert-silence scope does not authorize threshold changes.
+Send this request through the trusted gateway as a principal with `aiops:thresholds:write`, and include the one-time `X-AiOps-Approval-ID` header; the alert-silence scope does not authorize threshold changes.
 
 ```json
 {"cpu": 80, "mem": 80, "disk": 85}

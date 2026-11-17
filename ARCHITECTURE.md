@@ -121,15 +121,16 @@ For production, run `web_dashboard:app` through an approved WSGI server and depl
 
 ## 4. Runtime state and telemetry: current limits
 
-The following behavior is in-process and is lost on restart. It is not shared between workers or replicas:
+Some runtime state remains process-local and is lost on restart:
 
 - The sliding-window rate limiter uses the direct peer address. It is not a cluster-wide control.
-- `MetricsRegistry` tracks request counts and a bounded duration sample window. `/metrics` exports request counters and duration sum/count; it does not currently export a latency histogram, distributed trace, or `/api/slo` values.
-- `/api/slo` computes availability from retained requests in this process. Current error counting treats HTTP status codes `>=500` as errors, so 4xx and 429 responses count as available. This snapshot is not a durable or cluster-wide SLO measurement.
+- `MetricsRegistry` holds per-process request counters, a bounded local diagnostic window, and fixed-bucket latency histograms. `/metrics` exports counters and histograms with bounded method, scope, status, and Flask route-template labels. Scraping each instance into Prometheus allows those series to be aggregated; the local exporter itself is not durable or shared.
+- The request-availability SLI defines good events as API `2xx`/`3xx` responses; the denominator includes `2xx`/`3xx`, `429`, and `5xx`. Other `4xx` responses are excluded as caller errors. An empty window returns no-data/null availability, not 100%.
+- In development/test, `/api/slo` reports a bounded, process-local diagnostic. Production requires `AIOPS_PROMETHEUS_URL` and computes good/total events with Prometheus `sum(increase(...[window]))` over every instance scraped by the configured server. It returns `503` if shared telemetry is unavailable instead of falling back to local counters. Configure direct scraping of every instance and adequate retention; shared storage durability is still deployment-owned.
 - The web app's legacy `AuditLog` is bounded and records selected events, not every request or every failure. The separate typed `AuditEvent`/`AuditSink` contract exists, but no durable sink is wired to the web routes.
 - `BoundedStore` is currently written by dashboard refresh helpers but not read by the API routes. It is not a response cache or persistent data store.
 
-OpenTelemetry groups telemetry into traces, metrics, and logs; these signals help investigate service behavior from different angles. [4] Google SRE recommends monitoring latency, traffic, errors, and saturation, and designing SLIs around what users experience. [5] [6] The current implementation provides only a subset, so do not use its local `/api/slo` snapshot alone for paging, contractual reporting, or compliance evidence.
+OpenTelemetry groups telemetry into traces, metrics, and logs; these signals help investigate service behavior from different angles. [4] Google SRE recommends monitoring latency, traffic, errors, and saturation, and designing SLIs around what users experience. [5] [6] The exporter supplies request counts and latency distributions but not traces or saturation signals. Validate scrape coverage, retention, and the chosen SLI against actual user journeys before relying on SLOs for paging, contractual reporting, or compliance evidence.
 
 ## 5. Trust boundaries and known integration gaps
 
@@ -147,10 +148,10 @@ These are recommendations, not claims about existing code. They are ordered to m
 
 1. **Keep app construction testable.** Preserve the application factory's explicit settings/dependency boundary and regression tests for independent configurations. [9]
 2. **Define deployment ownership.** Select the actual WSGI server, ingress, TLS, identity/session method, secret injector, and network policy for the target environment. Keep local development independent of those choices.
-3. **Complete the approval boundary.** Route scopes and same-origin gateway protections exist; require a verifiable human-approval record before expanding sensitive write access.
+3. **Maintain the approval boundary.** Sensitive writes now require an external, one-time approval bound to the exact operation payload. Verify the approval service's deployment, identity, availability, and audit-retention properties before production use.
 4. **Verify integration deployments.** The app-side auth, timeout, TLS, request/response, and failure contracts have fake-backed tests. Confirm each deployment-owned provider's actual schema/auth mode, and separately define retries/idempotency before adding them; never substitute fabricated data.
-5. **Make reliability data meaningful at scale.** Define user-facing SLIs with explicit good-event/total-event semantics and a time window. Add histogram/percentile telemetry and shared/durable aggregation before using SLOs for paging or release gates. Google SRE recommends starting from critical user interactions and iterating measured SLOs rather than guessing targets. [6]
-6. **Make controls shared and durable where needed.** Replace or front the per-process limiter, metrics aggregation, and selected-event audit log with deployment-owned shared services if running multiple workers/replicas or retaining evidence. Test restart and multi-worker behavior.
+5. **Validate reliability data at scale.** The service defines an API request SLI and exports fixed-bucket histograms; production `/api/slo` aggregates counter increases through the configured Prometheus server. Scrape every app instance directly, retain data for at least the configured window, validate the status policy against user journeys, and review percentile/burn-rate thresholds before using them for paging or release gates. Google SRE recommends starting from critical user interactions and iterating measured SLOs rather than guessing targets. [6]
+6. **Make remaining controls shared and durable where needed.** The rate limiter and selected-event audit log are still process-local. Use deployment-owned shared services where multi-worker enforcement or durable evidence is required, and test restart and multi-worker behavior.
 7. **Threat-model the model boundary.** Classify which operational fields may be sent to the configured model, test direct and indirect prompt injection, validate output before display/use, and keep all privileged actions behind deterministic policy and human approval. [7] [8]
 
 ## References
